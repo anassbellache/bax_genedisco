@@ -28,6 +28,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
             maximize: If True, consider the problem a maximization problem.
         """
         super(DiscoBAXAdditive).__init__()
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def __call__(self,
                  dataset_x: AbstractDataSource,
@@ -54,15 +55,15 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
         # Subset the available data points
         avail_dataset_x = dataset_x.subset(available_indices)
-        X = torch.tensor(avail_dataset_x.get_data(), dtype=torch.float32)
+        X = torch.tensor(avail_dataset_x.get_data(), dtype=torch.float32, device=self.device)
         self.model = last_model
-        self.algo = SubsetSelect(avail_dataset_x)
+        self.algo = SubsetSelect(avail_dataset_x, device=self.device)
 
         # Get execution paths using SubsetSelect
         exe_path = self.algo.get_exe_paths(self.model)
         self.xs_exe, self.ys_exe = np.array(exe_path.x), np.array(exe_path.y)
-        self.xs_exe = torch.tensor(self.xs_exe, dtype=torch.float32)
-        self.ys_exe = torch.tensor(self.ys_exe, dtype=torch.float32)
+        self.xs_exe = torch.tensor(self.xs_exe, dtype=torch.float32, device=self.device)
+        self.ys_exe = torch.tensor(self.ys_exe, dtype=torch.float32, device=self.device)
 
         # Construct a batch of fantasy models
         self.fmodels = self.model.condition_on_observations(self.xs_exe, self.ys_exe)

@@ -182,7 +182,7 @@ class TopK(FixedPathAlgorithm):
 
 
 class SubsetSelect(Algorithm):
-    def __init__(self, X: AbstractDataSource, n_samples=1000, k=10):
+    def __init__(self, X: AbstractDataSource, device, n_samples=1000, k=10):
         """
             Initialize the SubsetSelect algorithm.
 
@@ -193,6 +193,7 @@ class SubsetSelect(Algorithm):
         super().__init__(params={})
         self.k = k
         self.X = X
+        self.device = device
         self.selected_subset = []
         self.mc_samples = n_samples
         self.exe_path = dict_to_namespace({"x": [], "y": []})
@@ -213,9 +214,9 @@ class SubsetSelect(Algorithm):
 
         # Convert candidate set to tensor
         if isinstance(S, torch.Tensor):
-            S_tensor = S
+            S_tensor = S.to(self.device)
         else:
-            S_tensor = torch.tensor(S.get_data(), dtype=torch.float32)
+            S_tensor = torch.tensor(S.get_data(), dtype=torch.float32, device=self.device)
 
         # Set up the sampler
         mc_sampler = IIDNormalSampler(sample_shape=torch.Size([self.mc_samples]))
@@ -236,10 +237,10 @@ class SubsetSelect(Algorithm):
     def handle_first_selection(self, f: BotorchCompatibleGP):
         # Calculate Monte Carlo expected values for entire dataset self.X
         scores = self.monte_carlo_expectation(self.X, f)
-        TE = torch.tensor(self.X.get_data(), dtype=torch.float32).squeeze(0)
+        TE = torch.tensor(self.X.get_data(), dtype=torch.float32, device=self.device).squeeze(0)
 
         # Select the element with the highest score
-        scores_tensor = torch.tensor(scores)
+        scores_tensor = torch.tensor(scores, device=self.device)
         first_selection = TE[torch.argmax(scores_tensor).item()]
 
         return first_selection
@@ -256,35 +257,33 @@ class SubsetSelect(Algorithm):
             next_selection = self.handle_first_selection(f)
             return next_selection
 
-        TE = torch.tensor(self.X.get_data(), dtype=torch.float32)
+        TE = torch.tensor(self.X.get_data(), dtype=torch.float32, device=self.device)
 
         # Convert the selected subset to a tensor once
         selected_tensor = torch.stack(
-            [torch.tensor(selected).float() for selected in self.selected_subset]
+            [torch.tensor(selected, device=self.device).float() for selected in self.selected_subset]
         )
+        selected_tensor = selected_tensor.to(self.device)
 
         # Create the mask based on selected subset
         mask = torch.tensor(
             [not any(torch.allclose(x.float(), y) for y in selected_tensor) for x in TE],
-            dtype=torch.bool
+            dtype=torch.bool,
+            device=self.device
         )
 
         # Extract candidates using the mask
         candidates_from_mask = TE[mask]
         selected_tensor = selected_tensor.unsqueeze(0)
-        print("selected_tensor: ", selected_tensor.shape)
-        print("candidates_from_mask: ", candidates_from_mask.shape)
 
         # Concatenate selected with candidates
-        concatenated_candidates = torch.cat([selected_tensor, candidates_from_mask], dim=1)
+        concatenated_candidates = torch.cat([selected_tensor, candidates_from_mask], dim=1).to(self.device)
 
         # Calculate the scores using Monte Carlo
         scores = self.monte_carlo_expectation(concatenated_candidates, f)
 
         # Select the next candidate based on highest score
-        scores_tensor = torch.tensor(scores)
-        print("Shape of concatenated_candidates:", concatenated_candidates.shape)
-        print("Shape of scores_tensor:", scores_tensor.shape)
+        scores_tensor = torch.tensor(scores, device=self.device)
         max_index = torch.argmax(scores_tensor).item()
         next_selection = concatenated_candidates[0, max_index]
 
@@ -302,6 +301,7 @@ class SubsetSelect(Algorithm):
         """
         print("take step")
         next_x = self.select_next(f)
+        next_x = next_x.to(self.device)
 
         if len(self.selected_subset) < self.k:
             self.selected_subset.append(next_x)

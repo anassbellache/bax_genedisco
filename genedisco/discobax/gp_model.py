@@ -38,15 +38,16 @@ from botorch.acquisition.objective import PosteriorTransform
 
 
 class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, train_x, train_y, likelihood):
+    def __init__(self, train_x, train_y, likelihood, device):
         super(SimpleGPRegressor, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ZeroMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.mean_module = gpytorch.means.ZeroMean().to(device)
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
+        self.device = device
 
     def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
         # Process the input through the neural network.
         # Obtain the prior distribution.
-        mvn = self(X)
+        mvn = self(X).to(self.device)
 
         if observation_noise:
             if isinstance(self.likelihood, _GaussianLikelihoodBase):
@@ -57,9 +58,9 @@ class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeM
                 )
 
         # Return the botorch wrapper around GPyTorch's posterior.
-        return GPyTorchPosterior(mvn)
+        return GPyTorchPosterior(mvn).to(self.device)
 
-    def condition_on_observations(self: TFantasizeMixin, X: Tensor, Y: Tensor, **kwargs: Any) -> TFantasizeMixin:
+    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any) -> TFantasizeMixin:
         """
                 Condition the NeuralGP on new observations (X, Y) and return a new NeuralGPModel.
                 """
@@ -69,14 +70,14 @@ class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeM
         train_inputs_projected = self.train_inputs[0]
 
         if train_inputs_projected.dim == 1:
-            updated_train_x = torch.cat([train_inputs_projected, X.squeeze(0)], dim=0)
+            updated_train_x = torch.cat([train_inputs_projected, X.squeeze(0)], dim=0).to(self.device)
         else:
-            updated_train_x = torch.cat([train_inputs_projected, X], dim=0)
+            updated_train_x = torch.cat([train_inputs_projected, X], dim=0).to(self.device)
 
-        updated_train_y = torch.cat([self.train_targets, Y], dim=0)
+        updated_train_y = torch.cat([self.train_targets, Y], dim=0).to(self.device)
 
         # Create a new model with the updated data.
-        new_model = self.__class__(updated_train_x, updated_train_y, self.likelihood)
+        new_model = self.__class__(updated_train_x, updated_train_y, self.likelihood, self.device)
         new_model.likelihood = self.likelihood
         new_model.mean_module = self.mean_module
         new_model.covar_module = self.covar_module
@@ -117,16 +118,17 @@ class LargeFeatureExtractor(torch.nn.Module):
 
 
 class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, data_dim, likelihood):
+    def __init__(self, data_dim, likelihood, device):
         super().__init__(None, None, likelihood)
 
         self.data_dim = data_dim
-        self.feature_extractor = LargeFeatureExtractor(data_dim)
-        self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.)
-        self.mean_module = gpytorch.means.ConstantMean()
+        self.device = device
+        self.feature_extractor = LargeFeatureExtractor(data_dim).to(device)
+        self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.).to(device)
+        self.mean_module = gpytorch.means.ConstantMean().to(device)
         self.covar_module = gpytorch.kernels.ScaleKernel(
             gpytorch.kernels.MaternKernel(nu=2.5)
-        )
+        ).to(device)
 
     def update_train_data(self, new_x: Tensor, new_y: Tensor) -> None:
         """
@@ -139,18 +141,18 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
         new_x_projected = self.feature_extractor(new_x)
 
         if self.train_inputs[0] is None:
-            updated_train_x = new_x_projected
-            updated_train_y = new_y
+            updated_train_x = new_x_projected.to(self.device)
+            updated_train_y = new_y.to(self.device)
         else:
-            train_inputs_projected = self.feature_extractor(self.train_inputs[0])
+            train_inputs_projected = self.feature_extractor(self.train_inputs[0]).to(self.device)
 
             # Concatenate old and new data
             if train_inputs_projected.dim() == 1:
-                updated_train_x = torch.cat([train_inputs_projected, new_x_projected.squeeze(0)], dim=0)
+                updated_train_x = torch.cat([train_inputs_projected, new_x_projected.squeeze(0)], dim=0).to(self.device)
             else:
-                updated_train_x = torch.cat([train_inputs_projected, new_x_projected], dim=0)
+                updated_train_x = torch.cat([train_inputs_projected, new_x_projected], dim=0).to(self.device)
 
-            updated_train_y = torch.cat([self.train_targets, new_y], dim=0)
+            updated_train_y = torch.cat([self.train_targets, new_y], dim=0).to(self.device)
 
         self.set_train_data(updated_train_x, updated_train_y, strict=False)
 
@@ -165,14 +167,14 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
         train_inputs_projected = self.feature_extractor(self.train_inputs[0])
 
         if train_inputs_projected.dim() == 1:
-            updated_train_x = torch.cat([train_inputs_projected, X_projected.squeeze(0)], dim=0)
+            updated_train_x = torch.cat([train_inputs_projected, X_projected.squeeze(0)], dim=0).to(self.device)
         else:
-            updated_train_x = torch.cat([train_inputs_projected, X_projected], dim=0)
+            updated_train_x = torch.cat([train_inputs_projected, X_projected], dim=0).to(self.device)
 
-        updated_train_y = torch.cat([self.train_targets, Y], dim=0)
+        updated_train_y = torch.cat([self.train_targets, Y], dim=0).to(self.device)
         data_dim = updated_train_x.shape(-1)
 
-        new_model = self.__class__(data_dim, self.likelihood)
+        new_model = self.__class__(data_dim, self.likelihood, self.device)
         new_model.likelihood = self.likelihood
         new_model.mean_module = self.mean_module
         new_model.covar_module = self.covar_module
@@ -184,7 +186,7 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
     def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
         # Process the input through the neural network.
         # Obtain the prior distribution.
-        mvn = self(X)
+        mvn = self(X).to(self.device)
 
         # If observation noise should be added and the likelihood is GaussianLikelihood
         if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
@@ -192,13 +194,13 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
             mvn = MultivariateNormal(mvn.mean, mvn.lazy_covariance_matrix.add_diag(noise))
 
         # Return the botorch wrapper around GPyTorch's posterior.
-        return GPyTorchPosterior(mvn)
+        return GPyTorchPosterior(mvn).to(self.device)
 
     def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
         pass
 
     def forward(self, x):
-        projected_x = self.feature_extractor(x)
+        projected_x = self.feature_extractor(x.to(self.device))
         projected_x = self.scale_to_bounds(projected_x)
         mean_x = self.mean_module(projected_x)
         covar_x = self.covar_module(projected_x)
@@ -210,24 +212,25 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
 
 
 class BotorchCompatibleGP(Model, AbstractBaseModel):
-    def __init__(self, dim_input):
+    def __init__(self, dim_input, device):
         super().__init__()
         self.num_samples = 100
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        self.model = NeuralGPModel(dim_input, self.likelihood).float()
+        self.model = NeuralGPModel(dim_input, self.likelihood, device).float()
+        self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
         self.return_samples = False
         self.data_dim = dim_input
 
         self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        self.noise_gp = SimpleGPRegressor(None, None, self.noise_likelihood)
+        self.noise_gp = SimpleGPRegressor(None, None, self.noise_likelihood, device)
         # Initialize train_x and train_y as None
         self.train_x = None
         self.train_y = None
 
     def predict(self, dataset_x: AbstractDataSource, batch_size: int = 10, row_names: List[AnyStr] = None) -> List[
         np.ndarray]:
-        x_tensor = torch.tensor(dataset_x.get_data(), dtype=torch.float32)
+        x_tensor = torch.tensor(dataset_x.get_data(), dtype=torch.float32, device=self.device)
         self.model.eval()
         self.likelihood.eval()
         self.noise_gp.eval()
@@ -296,13 +299,13 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
             raise ValueError("train_x cannot be None")
 
         # Convert AbstractDataSource to torch.Tensor
-        train_x = torch.tensor(train_x.get_data(), dtype=torch.float32)
-        train_y = torch.tensor(train_y.get_data(), dtype=torch.float32)
+        train_x = torch.tensor(train_x.get_data(), dtype=torch.float32, device=self.device)
+        train_y = torch.tensor(train_y.get_data(), dtype=torch.float32, device=self.device)
         self.num_samples = train_y.size(0)
 
         # Set the class attributes
-        self.train_x = train_x
-        self.train_y = train_y
+        self.train_x = train_x.to(self.device)
+        self.train_y = train_y.to(self.device)
 
         noise = 1e-4
         self.likelihood.noise = noise
@@ -362,9 +365,10 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
 
         # Extract data_dim from the saved state
         data_dim = state_dict["data_dim"]
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Create a new model instance with the extracted data_dim
-        model = cls(data_dim)
+        model = cls(data_dim, device)
 
         # Restore the state of the model and the likelihood
         model.model.load_state_dict(state_dict["model"])
@@ -395,16 +399,16 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         Condition the GPyTorchCompatibleGP on new observations (X, Y) and return a new GPyTorchCompatibleGP.
         """
         if self.train_x is None or self.train_y is None:
-            updated_train_x = X
-            updated_train_y = Y
+            updated_train_x = X.to(self.device)
+            updated_train_y = Y.to(self.device)
         else:
             # Combine new observations with existing training data
-            updated_train_x = torch.cat([self.train_x, X], dim=0)
-            updated_train_y = torch.cat([self.train_y, Y], dim=0)
+            updated_train_x = torch.cat([self.train_x, X], dim=0).to(self.device)
+            updated_train_y = torch.cat([self.train_y, Y], dim=0).to(self.device)
 
         # Create a new model with the combined data
         data_dim = updated_train_x.shape[-1]
-        new_model = BotorchCompatibleGP(data_dim)
+        new_model = BotorchCompatibleGP(data_dim, self.device)
 
         # Ensure that the new model carries over the necessary attributes
         # You might have to adjust the attributes being copied based on your needs
@@ -434,7 +438,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         # If your model or noise_gp have any input transformations, apply them here
         # X_transformed = self.transform_inputs(X)
         # For simplicity, I'm assuming no transformations:
-        X_transformed = X
+        X_transformed = X.to(self.device)
 
         # Compute the primary function posterior from self.model
         function_posterior = self.model.posterior(X_transformed)
@@ -466,5 +470,5 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
 
     def forward(self, x):
         # This might need modifications based on what BaseGPModel's predict method returns
-        pred = self.predict(x, batch_size=len(x))
+        pred = self.predict(x.to(self.device), batch_size=len(x))
         return pred
