@@ -47,7 +47,7 @@ class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeM
     def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
         # Process the input through the neural network.
         # Obtain the prior distribution.
-        mvn = self(X).to(self.device)
+        mvn = self(X)
 
         if observation_noise:
             if isinstance(self.likelihood, _GaussianLikelihoodBase):
@@ -58,7 +58,7 @@ class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeM
                 )
 
         # Return the botorch wrapper around GPyTorch's posterior.
-        return GPyTorchPosterior(mvn).to(self.device)
+        return GPyTorchPosterior(mvn)
 
     def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any) -> TFantasizeMixin:
         """
@@ -91,7 +91,7 @@ class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeM
         jitter_value = 1e-6
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
-        covar_x = covar_x + torch.eye(x.size(0)) * jitter_value
+        covar_x = covar_x + torch.eye(x.size(0), device=self.device) * jitter_value
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
     def __call__(self, x):
@@ -186,7 +186,7 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
     def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
         # Process the input through the neural network.
         # Obtain the prior distribution.
-        mvn = self(X).to(self.device)
+        mvn = self(X)
 
         # If observation noise should be added and the likelihood is GaussianLikelihood
         if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
@@ -194,7 +194,7 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
             mvn = MultivariateNormal(mvn.mean, mvn.lazy_covariance_matrix.add_diag(noise))
 
         # Return the botorch wrapper around GPyTorch's posterior.
-        return GPyTorchPosterior(mvn).to(self.device)
+        return GPyTorchPosterior(mvn)
 
     def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
         pass
@@ -215,14 +215,14 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
     def __init__(self, dim_input, device):
         super().__init__()
         self.num_samples = 100
-        self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        self.likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
         self.model = NeuralGPModel(dim_input, self.likelihood, device).float()
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
         self.return_samples = False
         self.data_dim = dim_input
 
-        self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
         self.noise_gp = SimpleGPRegressor(None, None, self.noise_likelihood, device)
         # Initialize train_x and train_y as None
         self.train_x = None
@@ -250,8 +250,10 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
                 end_i = min((i + 1) * batch_size, num_samples)
                 batch_x = x_tensor[start_i:end_i]
 
-                main_pred = self.likelihood(self.model(batch_x))
-                noise_pred = self.noise_likelihood(self.noise_gp(batch_x))
+                main_pred = self.likelihood(self.model(batch_x.to(self.device)))
+                noise_pred = self.noise_likelihood(self.noise_gp(batch_x.to(self.device)))
+                print("main_pred: ", main_pred.variance.device)
+
 
                 combined_mean = main_pred.mean + noise_pred.mean
                 combined_stddev = torch.sqrt(main_pred.variance + noise_pred.variance)
@@ -263,8 +265,8 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
                 if self.return_samples:
                     # Since sampling from the sum of two GP posteriors isn't straightforward,
                     # for simplicity we'll sample separately and add them.
-                    main_sample = main_pred.sample(sample_shape=torch.Size([self.num_samples]))
-                    noise_sample = noise_pred.sample(sample_shape=torch.Size([self.num_samples]))
+                    main_sample = main_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
+                    noise_sample = noise_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
                     combined_sample = main_sample + noise_sample
 
                     all_samples.append(combined_sample.cpu().numpy())
