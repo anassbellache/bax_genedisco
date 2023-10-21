@@ -28,7 +28,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
             maximize: If True, consider the problem a maximization problem.
         """
         super(DiscoBAXAdditive).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
 
     def __call__(self,
                  dataset_x: AbstractDataSource,

@@ -291,7 +291,7 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
             sp_model = BotorchCompatibleGP(
                 dim_input=SingleCycleApplication.get_dataset_x(self.feature_set_name,
                                                                self.cache_directory).get_shape()[0][-1],
-                device=torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                device=torch.device("cpu")
             )
         else:
             raise NotImplementedError(f"{self.model_name} does not exist.")

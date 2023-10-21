@@ -212,7 +212,7 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
 
 
 class BotorchCompatibleGP(Model, AbstractBaseModel):
-    def __init__(self, dim_input, device):
+    def __init__(self, dim_input, device, batch_size: int = 10):
         super().__init__()
         self.num_samples = 100
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
@@ -221,6 +221,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
         self.return_samples = False
         self.data_dim = dim_input
+        self.batch_size = batch_size
 
         self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
         self.noise_gp = SimpleGPRegressor(None, None, self.noise_likelihood, device)
@@ -228,7 +229,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         self.train_x = None
         self.train_y = None
 
-    def predict(self, dataset_x: AbstractDataSource, batch_size: int = 10, row_names: List[AnyStr] = None) -> List[
+    def predict(self, dataset_x: AbstractDataSource, batch_size: int = 256, row_names: List[AnyStr] = None) -> List[
         np.ndarray]:
         x_tensor = torch.tensor(dataset_x.get_data(), dtype=torch.float32, device=self.device)
         self.model.eval()
@@ -238,7 +239,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
 
         # Split the data into batches
         num_samples = x_tensor.size(0)
-        num_batches = (num_samples + batch_size - 1) // batch_size
+        num_batches = (num_samples + self.batch_size - 1) // self.batch_size
 
         all_pred_means = []
         all_pred_stds = []
@@ -246,8 +247,8 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
 
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             for i in range(num_batches):
-                start_i = i * batch_size
-                end_i = min((i + 1) * batch_size, num_samples)
+                start_i = i * self.batch_size
+                end_i = min((i + 1) * self.batch_size, num_samples)
                 batch_x = x_tensor[start_i:end_i]
 
                 main_pred = self.likelihood(self.model(batch_x.to(self.device)))
@@ -305,10 +306,11 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         train_y = torch.tensor(train_y.get_data(), dtype=torch.float32, device=self.device)
         self.num_samples = train_y.size(0)
 
-        # Set the class attributes
-        self.train_x = train_x.to(self.device)
-        self.train_y = train_y.to(self.device)
+        if validation_set_x and validation_set_y:
+            validation_set_x = torch.tensor(validation_set_x.get_data(), dtype=torch.float32, device=self.device)
+            validation_set_y = torch.tensor(validation_set_y.get_data(), dtype=torch.float32, device=self.device)
 
+        # Remaining initializations
         noise = 1e-4
         self.likelihood.noise = noise
         self.model.train()
@@ -316,13 +318,12 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         self.noise_gp.train()
         self.noise_likelihood.train()
 
-        # Combine parameters of both models for simultaneous optimization
         optimizer = optim.Adam(list(self.model.parameters()) + list(self.noise_gp.parameters()), lr=0.1)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10,
+                                                               verbose=True)
 
-        # Loss function to measure the error between the predicted and actual values
         loss_function = torch.nn.MSELoss()
 
-        # 4. Define the training loop
         num_epochs = 50
         for epoch in range(num_epochs):
             optimizer.zero_grad()
@@ -335,15 +336,35 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
             combined_output = main_output.mean + noise_output.mean
 
             # Calculate the combined loss
-            loss = loss_function(combined_output, train_y)
+            main_loss = -self.likelihood(main_output, train_y).log_prob(train_y)
+            noise_loss = -self.noise_likelihood(noise_output, train_y).log_prob(train_y)
+            combined_loss = loss_function(combined_output, train_y)
 
-            print(f"Epoch {epoch + 1}/{num_epochs} - Loss: {loss.item()}")
+            # Weighted sum of losses
+            total_loss = main_loss + noise_loss + combined_loss
+            total_loss = total_loss.mean()
 
-            # Backpropagation and optimization
-            loss.backward()
+            print(f"Epoch {epoch + 1}/{num_epochs} - Loss: {total_loss.item()}")
+
+            total_loss.backward()
             optimizer.step()
 
-        # Set both models to evaluation mode after training
+            # If validation set is provided, compute validation loss and pass it to scheduler
+            if validation_set_x is not None and validation_set_y is not None:
+                self.model.eval()
+                self.noise_gp.eval()
+
+                with torch.no_grad():
+                    main_val_output = self.model(validation_set_x)
+                    noise_val_output = self.noise_gp(validation_set_x)
+                    combined_val_output = main_val_output.mean + noise_val_output.mean
+                    val_loss = loss_function(combined_val_output, validation_set_y)
+
+                scheduler.step(val_loss)
+
+                self.model.train()
+                self.noise_gp.train()
+
         self.model.eval()
         self.likelihood.eval()
         self.noise_gp.eval()
@@ -367,7 +388,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
 
         # Extract data_dim from the saved state
         data_dim = state_dict["data_dim"]
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cpu")
 
         # Create a new model instance with the extracted data_dim
         model = cls(data_dim, device)
@@ -472,5 +493,5 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
 
     def forward(self, x):
         # This might need modifications based on what BaseGPModel's predict method returns
-        pred = self.predict(x.to(self.device), batch_size=len(x))
+        pred = self.predict(x.to(self.device))
         return pred

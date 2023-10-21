@@ -66,7 +66,7 @@ class SklearnRandomForestRegressor(AbstractMetaModel, SklearnModel):
                              " the number of estimators in ensemble models.")
         else:
             random_indices = np.random.randint(self.n_estimators, size=k)
-            y_samples = [self.model.estimators_[i].predict(x) 
+            y_samples = [self.model.estimators_[i].predict(x)
                          for i in random_indices]
             y_samples = np.swapaxes(y_samples, 0, 1)
         return y_samples

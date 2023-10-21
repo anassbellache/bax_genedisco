@@ -182,7 +182,7 @@ class TopK(FixedPathAlgorithm):
 
 
 class SubsetSelect(Algorithm):
-    def __init__(self, X: AbstractDataSource, device, n_samples=1000, k=10):
+    def __init__(self, X: AbstractDataSource, device, n_samples=1000, k=3):
         """
             Initialize the SubsetSelect algorithm.
 
