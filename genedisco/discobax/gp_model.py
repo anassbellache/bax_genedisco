@@ -23,83 +23,19 @@ import gpytorch
 import numpy as np
 import torch
 import torch.optim
+from botorch.acquisition.objective import PosteriorTransform
 from botorch.models.model import Model
-from botorch.models.model import TFantasizeMixin
 from botorch.posteriors import Posterior, GPyTorchPosterior
-from gpytorch.distributions import MultitaskMultivariateNormal
 from gpytorch.distributions import MultivariateNormal
 from gpytorch.likelihoods import GaussianLikelihood
-from gpytorch.likelihoods import _GaussianLikelihoodBase
+from gpytorch.models.deep_gps import DeepGP
 from slingpy import AbstractBaseModel, AbstractDataSource
 from torch import Tensor, optim
 from torch.nn import Module
 
-from botorch.acquisition.objective import PosteriorTransform
-
-
-class SimpleGPRegressor(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, train_x, train_y, likelihood, device):
-        super(SimpleGPRegressor, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ZeroMean().to(device)
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
-        self.device = device
-
-    def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
-        # Process the input through the neural network.
-        # Obtain the prior distribution.
-        mvn = self(X)
-
-        if observation_noise:
-            if isinstance(self.likelihood, _GaussianLikelihoodBase):
-                # Adjust the variance using the likelihood's noise.
-                noise = self.likelihood.noise
-                mvn = MultitaskMultivariateNormal(
-                    mvn.mean, mvn.lazy_covariance_matrix.add_diag(noise)
-                )
-
-        # Return the botorch wrapper around GPyTorch's posterior.
-        return GPyTorchPosterior(mvn)
-
-    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any) -> TFantasizeMixin:
-        """
-                Condition the NeuralGP on new observations (X, Y) and return a new NeuralGPModel.
-                """
-        # Ensure that the new data is processed using the feature extractor
-
-        # Make sure self.train_inputs[0] is the projected version
-        train_inputs_projected = self.train_inputs[0]
-
-        if train_inputs_projected.dim == 1:
-            updated_train_x = torch.cat([train_inputs_projected, X.squeeze(0)], dim=0).to(self.device)
-        else:
-            updated_train_x = torch.cat([train_inputs_projected, X], dim=0).to(self.device)
-
-        updated_train_y = torch.cat([self.train_targets, Y], dim=0).to(self.device)
-
-        # Create a new model with the updated data.
-        new_model = self.__class__(updated_train_x, updated_train_y, self.likelihood, self.device)
-        new_model.likelihood = self.likelihood
-        new_model.mean_module = self.mean_module
-        new_model.covar_module = self.covar_module
-
-        return new_model
-
-    def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
-        pass
-
-    def forward(self, x):
-        jitter_value = 1e-6
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        covar_x = covar_x + torch.eye(x.size(0), device=self.device) * jitter_value
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-    def __call__(self, x):
-        return self.forward(x)
-
 
 class LargeFeatureExtractor(torch.nn.Module):
-    def __init__(self, data_dim):
+    def __init__(self, data_dim, feature_dim):
         super(LargeFeatureExtractor, self).__init__()
         self.layers = torch.nn.Sequential(
             torch.nn.Linear(data_dim, 1000),
@@ -108,7 +44,7 @@ class LargeFeatureExtractor(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Linear(500, 50),
             torch.nn.ReLU(),
-            torch.nn.Linear(50, 2)
+            torch.nn.Linear(50, feature_dim)
         )
 
     def forward(self, x):
@@ -117,18 +53,16 @@ class LargeFeatureExtractor(torch.nn.Module):
         return x
 
 
-class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, data_dim, likelihood, device):
+class NeuralGPModel(DeepGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, data_dim, likelihood, device, feature_dim=100):
         super().__init__(None, None, likelihood)
 
         self.data_dim = data_dim
         self.device = device
-        self.feature_extractor = LargeFeatureExtractor(data_dim).to(device)
-        self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.).to(device)
-        self.mean_module = gpytorch.means.ConstantMean().to(device)
-        self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.MaternKernel(nu=2.5)
-        ).to(device)
+        self.feature_extractor = LargeFeatureExtractor(data_dim, feature_dim).to(device)
+        self.mean_module = gpytorch.means.ConstantMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.)
 
     def update_train_data(self, new_x: Tensor, new_y: Tensor) -> None:
         """
@@ -204,7 +138,6 @@ class NeuralGPModel(gpytorch.models.ExactGP, botorch.models.model.FantasizeMixin
         projected_x = self.scale_to_bounds(projected_x)
         mean_x = self.mean_module(projected_x)
         covar_x = self.covar_module(projected_x)
-
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
     def __call__(self, x):
@@ -224,7 +157,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         self.batch_size = batch_size
 
         self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-        self.noise_gp = SimpleGPRegressor(None, None, self.noise_likelihood, device)
+        self.noise_gp = NeuralGPModel(None, None, self.noise_likelihood, device)
         # Initialize train_x and train_y as None
         self.train_x = None
         self.train_y = None
@@ -254,7 +187,6 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
                 main_pred = self.likelihood(self.model(batch_x.to(self.device)))
                 noise_pred = self.noise_likelihood(self.noise_gp(batch_x.to(self.device)))
                 print("main_pred: ", main_pred.variance.device)
-
 
                 combined_mean = main_pred.mean + noise_pred.mean
                 combined_stddev = torch.sqrt(main_pred.variance + noise_pred.variance)
@@ -318,7 +250,16 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         self.noise_gp.train()
         self.noise_likelihood.train()
 
-        optimizer = optim.Adam(list(self.model.parameters()) + list(self.noise_gp.parameters()), lr=0.1)
+        # Use the adam optimizer
+        optimizer = torch.optim.Adam([
+            {'params': self.model.feature_extractor.parameters()},
+            {'params': self.model.covar_module.parameters()},
+            {'params': self.model.mean_module.parameters()},
+            {'params': self.likelihood.parameters()},
+            {'params': self.noise_gp.parameters()},
+            {'params': self.noise_likelihood.parameters()}
+        ], lr=0.01)
+
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10,
                                                                verbose=True)
 
