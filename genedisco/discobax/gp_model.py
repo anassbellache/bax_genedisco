@@ -376,9 +376,11 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         # Create a new model instance with the extracted data_dim
         model = cls(data_dim, device)
 
-        # Restore the state of the model and the likelihood
-        model.model.load_state_dict(state_dict["model"])
+        # Restore the state of the models and the likelihoods
+        model.neural_gp.load_state_dict(state_dict["neural_gp"])
         model.likelihood.load_state_dict(state_dict["likelihood"])
+        model.noise_gp.load_state_dict(state_dict["noise_gp"])
+        model.noise_likelihood.load_state_dict(state_dict["noise_likelihood"])
 
         return model
 
@@ -395,8 +397,10 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         """
         state_dict = {
             "data_dim": self.data_dim,
-            "model": self.model.state_dict(),
+            "neural_gp": self.neural_gp.state_dict(),
             "likelihood": self.likelihood.state_dict(),
+            "noise_gp": self.noise_gp.state_dict(),
+            "noise_likelihood": self.noise_likelihood.state_dict()
         }
         torch.save(state_dict, file_path)
 
@@ -405,13 +409,24 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         Condition the NeuralGP and VariationalGP on new observations (X, Y)
         and return a new BotorchCompatibleGP with the updated models.
         """
-        self.update_train_data(X, Y)
-        # Return a new instance of BotorchCompatibleGP
-        return BotorchCompatibleGP(self.data_dim, self.device)
+        # Combine the old training data with the new observations
+        if self.train_x is not None and self.train_y is not None:
+            X = torch.cat([self.train_x, X], dim=0)
+            Y = torch.cat([self.train_y, Y], dim=0)
+
+        # Create a new instance of the model
+        fantasy_model = BotorchCompatibleGP(self.data_dim, self.device)
+
+        # Update the training data of the new model
+        fantasy_model.train_x = X
+        fantasy_model.train_y = Y
+
+        # Return the fantasy model
+        return fantasy_model
 
     def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
         """Get the posterior from the sum_gp."""
-        mvn = self.sum_gp(X)
+        mvn = self.sum_gp.forward(X)
 
         # If observation noise should be added
         if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
@@ -419,6 +434,9 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
             mvn = MultivariateNormal(mvn.mean, mvn.lazy_covariance_matrix.add_diag(noise))
 
         return GPyTorchPosterior(mvn)
+
+    def forward(self, x):
+        return self.sum_gp(x)
 
     def forward(self, x):
         # This might need modifications based on what BaseGPModel's predict method returns
