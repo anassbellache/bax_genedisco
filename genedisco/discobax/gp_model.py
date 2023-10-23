@@ -10,12 +10,11 @@
 #  Scales up to large datasets
 #  Handles batches
 
+from typing import Any, Optional
 from typing import (
-    Any,
     AnyStr,
     Type,
     List,
-    Optional,
 )
 
 import botorch
@@ -23,47 +22,51 @@ import gpytorch
 import numpy as np
 import torch
 import torch.optim
-from botorch.fit import fit_gpytorch_model
-from botorch.models import SingleTaskVariationalGP
+from botorch.models import ApproximateGPyTorchModel
 from botorch.models.model import Model, TFantasizeMixin
 from botorch.posteriors import Posterior, GPyTorchPosterior
 from gpytorch.distributions import MultivariateNormal
 from gpytorch.likelihoods import GaussianLikelihood
-from gpytorch.mlls import ExactMarginalLogLikelihood
-from gpytorch.mlls import VariationalELBO
+from gpytorch.models import VariationalGP
 from gpytorch.variational import CholeskyVariationalDistribution
+from gpytorch.variational import VariationalStrategy
 from slingpy import AbstractBaseModel, AbstractDataSource
 from torch import Tensor
 from torch.nn import Module
 
 
-class VariationalGPModel(botorch.models.SingleTaskVariationalGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, train_X, train_Y, likelihood, dim_input, device, num_inducing_points=10):
+class VariationalGPModel(VariationalGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, likelihood, dim_input, device, num_inducing_points=10):
         # Initialize inducing points
         inducing_points = torch.randn(num_inducing_points, dim_input).to(device)
 
         # Setup the variational distribution
         variational_distribution = CholeskyVariationalDistribution(inducing_points.size(0)).to(device)
 
-        # Define mean and covariance functions
-        mean_module = gpytorch.means.ZeroMean().to(device)
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
+        # Initialize the variational strategy
+        variational_strategy = VariationalStrategy(
+            self, inducing_points, variational_distribution, learn_inducing_locations=True
+        )
 
         # Call superclass's __init__ method with the necessary arguments
-        super(VariationalGPModel, self).__init__(
-            train_X=train_X,
-            train_Y=train_Y,
-            likelihood=likelihood,
-            inducing_points=inducing_points,
-            variational_distribution=variational_distribution,
-            covar_module=covar_module,
-            mean_module=mean_module,
-            learn_inducing_points=True
-        )
+        super(VariationalGPModel, self).__init__(variational_strategy=variational_strategy)
+
+        # Define mean and covariance functions
+        self.mean_module = gpytorch.means.ZeroMean().to(device)
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
+        self.likelihood = likelihood
 
         # Store device for further use
         self.device = device
-        # The rest of the class remains unchanged...
+
+    def forward(self, x):
+        # Return the predictive mean and variance for the given inputs x
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+    def __call__(self, x, **kwargs):
+        return self.forward(x)
 
     def posterior(self, X: Tensor, *args, observation_noise: bool = False, **kwargs: Any) -> Posterior:
         # Get the predictive distribution (prior) for X
@@ -100,9 +103,6 @@ class VariationalGPModel(botorch.models.SingleTaskVariationalGP, botorch.models.
     def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
         pass
 
-    def __call__(self, x, **kwargs):
-        return self.forward(x)
-
 
 class LargeFeatureExtractor(torch.nn.Module):
     def __init__(self, data_dim, feature_dim):
@@ -123,33 +123,31 @@ class LargeFeatureExtractor(torch.nn.Module):
         return x
 
 
-class NeuralGPModel(SingleTaskVariationalGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, train_X, train_Y, likelihood, device, feature_dim=100, num_inducing_points=100):
-        # Inducing points setup
-        inducing_points = torch.randn(num_inducing_points, train_X.size(-1)).to(device)
+class NeuralGPModel(VariationalGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, likelihood, dim_input, device, feature_selection=100, num_inducing_points=10):
+        # Initialize inducing points
+        inducing_points = torch.randn(num_inducing_points, dim_input).to(device)
 
-        # Variational distribution
-        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(
-            num_inducing_points).to(device)
+        # Setup the variational distribution
+        variational_distribution = CholeskyVariationalDistribution(inducing_points.size(0)).to(device)
 
-        # Covariance and mean functions
-        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
-        mean_module = gpytorch.means.ConstantMean().to(device)
-
-        # Superclass initialization
-        super().__init__(
-            train_X=train_X,
-            train_Y=train_Y,
-            likelihood=likelihood,
-            inducing_points=inducing_points,
-            variational_distribution=variational_distribution,
-            covar_module=covar_module,
-            mean_module=mean_module,
-            learn_inducing_points=True
+        # Initialize the variational strategy
+        variational_strategy = VariationalStrategy(
+            self, inducing_points, variational_distribution, learn_inducing_locations=True
         )
 
+        # Call superclass's __init__ method with the necessary arguments
+        super(NeuralGPModel, self).__init__(variational_strategy=variational_strategy)
+        # Define mean and covariance functions
+        self.mean_module = gpytorch.means.ZeroMean().to(device)
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
+        self.likelihood = likelihood
+
+        # Store device for further use
+        self.device = device
+
         # Neural network feature extractor
-        self.feature_extractor = LargeFeatureExtractor(train_X.size(-1), feature_dim).to(device)
+        self.feature_extractor = LargeFeatureExtractor(dim_input, feature_selection).to(device)
 
     def update_train_data(self, new_x: Tensor, new_y: Tensor) -> None:
         """
@@ -214,38 +212,71 @@ class NeuralGPModel(SingleTaskVariationalGP, botorch.models.model.FantasizeMixin
     def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
         pass
 
-    def __call__(self, x):
+    def forward(self, x):
+        # Return the predictive mean and variance for the given inputs x
+        mean_x = self.mean_module(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+    def __call__(self, x, **kwargs):
         return self.forward(x)
 
 
-class SumGPModel(gpytorch.models.ApproximateGP):
-    def __init__(self, neural_gp, noise_gp):
+class SumGPModel(VariationalGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, neural_gp, noise_gp, neural_likelihood, noise_likelihood):
         super().__init__(neural_gp.variational_strategy)
-        self.neural_gp = neural_gp
-        self.noise_gp = noise_gp
+        self.neural_gp = ApproximateGPyTorchModel(neural_gp, neural_likelihood)
+        self.noise_gp = ApproximateGPyTorchModel(noise_gp, noise_likelihood)
 
     def forward(self, x):
         neural_out = self.neural_gp(x)
         noise_out = self.noise_gp(x)
         mean_x = neural_out.mean + noise_out.mean
         covar_x = neural_out.lazy_covariance_matrix + noise_out.lazy_covariance_matrix
+        return MultivariateNormal(mean_x, covar_x)
 
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+    def __call__(self, x, **kwargs):
+        return self.forward(x)
+
+    def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
+        """Get the posterior from the sum_gp."""
+        neural_posterior = self.neural_gp.posterior(X, observation_noise=observation_noise, **kwargs)
+        noise_posterior = self.noise_gp.posterior(X, observation_noise=observation_noise, **kwargs)
+        mean_x = neural_posterior.mean + noise_posterior.mean
+        covar_x = neural_posterior.lazy_covariance_matrix + noise_posterior.lazy_covariance_matrix
+        return GPyTorchPosterior(MultivariateNormal(mean_x, covar_x))
+
+    def condition_on_observations(self: TFantasizeMixin, X: Tensor, Y: Tensor, **kwargs: Any) -> TFantasizeMixin:
+        # Condition both the neural and noise GPs on the observations
+        conditioned_neural_gp = self.neural_gp.condition_on_observations(X, Y, **kwargs)
+        conditioned_noise_gp = self.noise_gp.condition_on_observations(X, Y, **kwargs)
+
+        # Create a new SumGPModel with the conditioned models
+        conditioned_sum_gp = SumGPModel(
+            neural_gp=conditioned_neural_gp.model,
+            noise_gp=conditioned_noise_gp.model,
+            neural_likelihood=self.neural_gp.likelihood,
+            noise_likelihood=self.noise_gp.likelihood
+        )
+        return conditioned_sum_gp
+
+    def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
+        # This is a placeholder. You'll need to implement this depending on what you want to achieve.
+        return X
 
 
 class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.FantasizeMixin):
     def __init__(self, dim_input, device, batch_size: int = 64):
         super().__init__()
-        train_X = torch.zeros(dim_input, device=device)
-
-        self.likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
-        self.neural_gp = NeuralGPModel(train_X, None, self.likelihood, device).float()
 
         self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
-        self.noise_gp = VariationalGPModel(train_X, None, self.noise_likelihood, dim_input, device).float()
+        self.noise_gp = VariationalGPModel(self.noise_likelihood, dim_input, device).float()
+
+        self.likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
+        self.neural_gp = NeuralGPModel(self.likelihood, dim_input, device).float()
 
         # Combined GP model
-        self.sum_gp = SumGPModel(self.neural_gp, self.noise_gp)
+        self.sum_gp = SumGPModel(self.neural_gp, self.noise_gp, self.likelihood, self.noise_likelihood)
 
         self.device = device
         self.num_samples = 100
@@ -326,32 +357,15 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         train_y = torch.tensor(train_y.get_data(), dtype=torch.float32, device=self.device)
         self.num_samples = train_y.size(0)
 
-        # Train NeuralGPModel
-        self.neural_gp.train()
-        self.likelihood.train()
-        mll_neural = gpytorch.mlls.VariationalELBO(self.likelihood, self.neural_gp, train_y.numel(),
-                                                   combine_terms=False)
-        optimizer_neural = torch.optim.Adam(self.neural_gp.parameters(), lr=0.01)
-        # This is a basic loop for training; in real applications, consider using multiple epochs
+        self.sum_gp.train()
+        mll_sum = gpytorch.mlls.VariationalELBO(self.sum_likelihood, self.sum_gp, train_y.numel())
+        optimizer_sum = torch.optim.Adam(self.sum_gp.parameters(), lr=0.01)
         for i in range(50):
-            optimizer_neural.zero_grad()
-            output_neural = self.neural_gp(train_x)
-            loss_neural = -mll_neural(output_neural, train_y)
-            loss_neural.backward()
-            optimizer_neural.step()
-
-        # Train VariationalGPModel for noise
-        self.noise_gp.train()
-        self.noise_likelihood.train()
-        mll_variational = gpytorch.mlls.VariationalELBO(self.noise_likelihood, self.noise_gp, train_y.numel())
-        optimizer_noise = torch.optim.Adam(self.noise_gp.parameters(), lr=0.01)
-        # Again, this is a basic loop for training
-        for i in range(50):
-            optimizer_noise.zero_grad()
-            output_noise = self.noise_gp(train_x)
-            loss_noise = -mll_variational(output_noise, train_y)
-            loss_noise.backward()
-            optimizer_noise.step()
+            optimizer_sum.zero_grad()
+            output_sum = self.sum_gp(train_x)
+            loss_sum = -mll_sum(output_sum, train_y)
+            loss_sum.backward()
+            optimizer_sum.step()
 
         return self
 
