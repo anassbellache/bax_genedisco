@@ -65,6 +65,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.xs_exe = torch.tensor(self.xs_exe, dtype=torch.float32, device=self.device)
         self.ys_exe = torch.tensor(self.ys_exe, dtype=torch.float32, device=self.device)
 
+
         # Construct a batch of fantasy models
         self.fmodels = self.model.condition_on_observations(self.xs_exe, self.ys_exe)
 
@@ -73,8 +74,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         var_p = p.variance.reshape(p.variance.shape[:-1])
 
         # Calculate the variance of the fantasy posteriors
-        pfs = self.fmodels.posterior(
-            X.reshape(*X.shape[:-2], 1, *X.shape[-2:]).expand(*X.shape[:-2], self.algo.mc_samples, *X.shape[-2:]))
+        pfs = self.fmodels.posterior(X)
         var_pfs = pfs.variance.reshape(pfs.variance.shape[:-1])
 
         # Calculate Shannon entropy for current and fantasy posteriors

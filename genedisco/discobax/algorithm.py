@@ -251,7 +251,6 @@ class SubsetSelect(Algorithm):
 
         :return: Point from X that is estimated to maximize the expectation.
         """
-        print("select next")
         if len(self.selected_subset) < 1:
             # Handle the first selection
             next_selection = self.handle_first_selection(f)
@@ -299,7 +298,6 @@ class SubsetSelect(Algorithm):
         :param f: Not used in this method but retained for compatibility.
         :return: Next selected point or None if selection is complete.
         """
-        print("take step")
         next_x = self.select_next(f)
         next_x = next_x.to(self.device)
 

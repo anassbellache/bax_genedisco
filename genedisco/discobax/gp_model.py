@@ -23,15 +23,85 @@ import gpytorch
 import numpy as np
 import torch
 import torch.optim
-from botorch.acquisition.objective import PosteriorTransform
-from botorch.models.model import Model
+from botorch.fit import fit_gpytorch_model
+from botorch.models import SingleTaskVariationalGP
+from botorch.models.model import Model, TFantasizeMixin
 from botorch.posteriors import Posterior, GPyTorchPosterior
 from gpytorch.distributions import MultivariateNormal
 from gpytorch.likelihoods import GaussianLikelihood
-from gpytorch.models.deep_gps import DeepGP
+from gpytorch.mlls import ExactMarginalLogLikelihood
+from gpytorch.mlls import VariationalELBO
+from gpytorch.variational import CholeskyVariationalDistribution
 from slingpy import AbstractBaseModel, AbstractDataSource
-from torch import Tensor, optim
+from torch import Tensor
 from torch.nn import Module
+
+
+class VariationalGPModel(botorch.models.SingleTaskVariationalGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, train_X, train_Y, likelihood, dim_input, device, num_inducing_points=10):
+        # Initialize inducing points
+        inducing_points = torch.randn(num_inducing_points, dim_input).to(device)
+
+        # Setup the variational distribution
+        variational_distribution = CholeskyVariationalDistribution(inducing_points.size(0)).to(device)
+
+        # Define mean and covariance functions
+        mean_module = gpytorch.means.ZeroMean().to(device)
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
+
+        # Call superclass's __init__ method with the necessary arguments
+        super(VariationalGPModel, self).__init__(
+            train_X=train_X,
+            train_Y=train_Y,
+            likelihood=likelihood,
+            inducing_points=inducing_points,
+            variational_distribution=variational_distribution,
+            covar_module=covar_module,
+            mean_module=mean_module,
+            learn_inducing_points=True
+        )
+
+        # Store device for further use
+        self.device = device
+        # The rest of the class remains unchanged...
+
+    def posterior(self, X: Tensor, *args, observation_noise: bool = False, **kwargs: Any) -> Posterior:
+        # Get the predictive distribution (prior) for X
+        predictive_distribution = self.forward(X)
+
+        # Get the approximate posterior using the variational strategy
+        posterior_distribution = self.variational_strategy(X, predictive_distribution)
+
+        # If observation_noise flag is set, add the likelihood noise to the posterior
+        if observation_noise:
+            posterior_distribution = self.likelihood(posterior_distribution, *args, **kwargs)
+
+        # Return the posterior as a Botorch GPyTorchPosterior object
+        return GPyTorchPosterior(posterior_distribution)
+
+    def condition_on_observations(self: TFantasizeMixin, X: Tensor, Y: Tensor, **kwargs: Any) -> TFantasizeMixin:
+        # Combine the original inducing points with the new observations
+        fantasy_inducing_points = torch.cat([self.variational_strategy.inducing_points, X], dim=0)
+
+        # Create a new model with the updated set of inducing points
+        fantasy_model = self.__class__(
+            input_dim=X.size(-1),
+            likelihood=self.likelihood,
+            device=self.device,
+            num_inducing_points=fantasy_inducing_points.size(0)
+        )
+
+        # Set the inducing points of the new model to the combined set of points
+        fantasy_model.variational_strategy.inducing_points = fantasy_inducing_points
+
+        # Return the new fantasy model
+        return fantasy_model
+
+    def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
+        pass
+
+    def __call__(self, x, **kwargs):
+        return self.forward(x)
 
 
 class LargeFeatureExtractor(torch.nn.Module):
@@ -53,16 +123,33 @@ class LargeFeatureExtractor(torch.nn.Module):
         return x
 
 
-class NeuralGPModel(DeepGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, data_dim, likelihood, device, feature_dim=100):
-        super().__init__(None, None, likelihood)
+class NeuralGPModel(SingleTaskVariationalGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, train_X, train_Y, likelihood, device, feature_dim=100, num_inducing_points=100):
+        # Inducing points setup
+        inducing_points = torch.randn(num_inducing_points, train_X.size(-1)).to(device)
 
-        self.data_dim = data_dim
-        self.device = device
-        self.feature_extractor = LargeFeatureExtractor(data_dim, feature_dim).to(device)
-        self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
-        self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(-1., 1.)
+        # Variational distribution
+        variational_distribution = gpytorch.variational.CholeskyVariationalDistribution(
+            num_inducing_points).to(device)
+
+        # Covariance and mean functions
+        covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel()).to(device)
+        mean_module = gpytorch.means.ConstantMean().to(device)
+
+        # Superclass initialization
+        super().__init__(
+            train_X=train_X,
+            train_Y=train_Y,
+            likelihood=likelihood,
+            inducing_points=inducing_points,
+            variational_distribution=variational_distribution,
+            covar_module=covar_module,
+            mean_module=mean_module,
+            learn_inducing_points=True
+        )
+
+        # Neural network feature extractor
+        self.feature_extractor = LargeFeatureExtractor(train_X.size(-1), feature_dim).to(device)
 
     def update_train_data(self, new_x: Tensor, new_y: Tensor) -> None:
         """
@@ -90,30 +177,24 @@ class NeuralGPModel(DeepGP, botorch.models.model.FantasizeMixin):
 
         self.set_train_data(updated_train_x, updated_train_y, strict=False)
 
-    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any) -> 'NeuralGPModel':
+    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any):
         """
         Condition the NeuralGP on new observations (X, Y) and return a new NeuralGPModel.
         """
-        # Ensure that the new data is processed using the feature extractor
-        X_projected = self.feature_extractor(X)
+        # Update train data
+        self.update_train_data(X, Y)
 
-        # Make sure self.train_inputs[0] is the projected version
-        train_inputs_projected = self.feature_extractor(self.train_inputs[0])
+        # Create a new model instance with updated training data
+        new_model = self.__class__(self.data_dim, self.likelihood, self.device)
 
-        if train_inputs_projected.dim() == 1:
-            updated_train_x = torch.cat([train_inputs_projected, X_projected.squeeze(0)], dim=0).to(self.device)
-        else:
-            updated_train_x = torch.cat([train_inputs_projected, X_projected], dim=0).to(self.device)
-
-        updated_train_y = torch.cat([self.train_targets, Y], dim=0).to(self.device)
-        data_dim = updated_train_x.shape(-1)
-
-        new_model = self.__class__(data_dim, self.likelihood, self.device)
+        # Copy model components
         new_model.likelihood = self.likelihood
         new_model.mean_module = self.mean_module
         new_model.covar_module = self.covar_module
         new_model.feature_extractor = self.feature_extractor
-        new_model.set_train_data(updated_train_x, updated_train_y)
+
+        # Set the training data of the new model
+        new_model.set_train_data(self.train_inputs[0], self.train_targets)
 
         return new_model
 
@@ -133,31 +214,45 @@ class NeuralGPModel(DeepGP, botorch.models.model.FantasizeMixin):
     def transform_inputs(self, X: Tensor, input_transform: Optional[Module] = None) -> Tensor:
         pass
 
-    def forward(self, x):
-        projected_x = self.feature_extractor(x.to(self.device))
-        projected_x = self.scale_to_bounds(projected_x)
-        mean_x = self.mean_module(projected_x)
-        covar_x = self.covar_module(projected_x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
     def __call__(self, x):
         return self.forward(x)
 
 
-class BotorchCompatibleGP(Model, AbstractBaseModel):
-    def __init__(self, dim_input, device, batch_size: int = 10):
+class SumGPModel(gpytorch.models.ApproximateGP):
+    def __init__(self, neural_gp, noise_gp):
+        super().__init__(neural_gp.variational_strategy)
+        self.neural_gp = neural_gp
+        self.noise_gp = noise_gp
+
+    def forward(self, x):
+        neural_out = self.neural_gp(x)
+        noise_out = self.noise_gp(x)
+        mean_x = neural_out.mean + noise_out.mean
+        covar_x = neural_out.lazy_covariance_matrix + noise_out.lazy_covariance_matrix
+
+        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.FantasizeMixin):
+    def __init__(self, dim_input, device, batch_size: int = 64):
         super().__init__()
-        self.num_samples = 100
+        train_X = torch.zeros(dim_input, device=device)
+
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
-        self.model = NeuralGPModel(dim_input, self.likelihood, device).float()
+        self.neural_gp = NeuralGPModel(train_X, None, self.likelihood, device).float()
+
+        self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
+        self.noise_gp = VariationalGPModel(train_X, None, self.noise_likelihood, dim_input, device).float()
+
+        # Combined GP model
+        self.sum_gp = SumGPModel(self.neural_gp, self.noise_gp)
+
         self.device = device
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=0.1)
+        self.num_samples = 100
         self.return_samples = False
         self.data_dim = dim_input
         self.batch_size = batch_size
 
-        self.noise_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
-        self.noise_gp = NeuralGPModel(None, None, self.noise_likelihood, device)
         # Initialize train_x and train_y as None
         self.train_x = None
         self.train_y = None
@@ -165,7 +260,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
     def predict(self, dataset_x: AbstractDataSource, batch_size: int = 256, row_names: List[AnyStr] = None) -> List[
         np.ndarray]:
         x_tensor = torch.tensor(dataset_x.get_data(), dtype=torch.float32, device=self.device)
-        self.model.eval()
+        self.sum_gp.eval()
         self.likelihood.eval()
         self.noise_gp.eval()
         self.noise_likelihood.eval()
@@ -184,13 +279,10 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
                 end_i = min((i + 1) * self.batch_size, num_samples)
                 batch_x = x_tensor[start_i:end_i]
 
-                main_pred = self.likelihood(self.model(batch_x.to(self.device)))
-                noise_pred = self.noise_likelihood(self.noise_gp(batch_x.to(self.device)))
-                print("main_pred: ", main_pred.variance.device)
+                main_pred = self.likelihood(self.sum_gp(batch_x.to(self.device)))
 
-                combined_mean = main_pred.mean + noise_pred.mean
-                combined_stddev = torch.sqrt(main_pred.variance + noise_pred.variance)
-
+                combined_mean = main_pred.mean
+                combined_stddev = main_pred.variance
                 all_pred_means.append(combined_mean.cpu().numpy())
                 all_pred_stds.append(combined_stddev.cpu().numpy())
 
@@ -199,8 +291,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
                     # Since sampling from the sum of two GP posteriors isn't straightforward,
                     # for simplicity we'll sample separately and add them.
                     main_sample = main_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
-                    noise_sample = noise_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
-                    combined_sample = main_sample + noise_sample
+                    combined_sample = main_sample
 
                     all_samples.append(combined_sample.cpu().numpy())
 
@@ -227,89 +318,40 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
             validation_set_x: Optional[AbstractDataSource] = None,
             validation_set_y: Optional[AbstractDataSource] = None) -> "AbstractBaseModel":
 
-        if train_y is None:
-            raise ValueError("train_y cannot be None")
-
-        if train_x is None:
-            raise ValueError("train_x cannot be None")
+        if train_x is None or train_y is None:
+            raise ValueError("Both train_x and train_y must be provided")
 
         # Convert AbstractDataSource to torch.Tensor
         train_x = torch.tensor(train_x.get_data(), dtype=torch.float32, device=self.device)
         train_y = torch.tensor(train_y.get_data(), dtype=torch.float32, device=self.device)
         self.num_samples = train_y.size(0)
 
-        if validation_set_x and validation_set_y:
-            validation_set_x = torch.tensor(validation_set_x.get_data(), dtype=torch.float32, device=self.device)
-            validation_set_y = torch.tensor(validation_set_y.get_data(), dtype=torch.float32, device=self.device)
-
-        # Remaining initializations
-        noise = 1e-4
-        self.likelihood.noise = noise
-        self.model.train()
+        # Train NeuralGPModel
+        self.neural_gp.train()
         self.likelihood.train()
+        mll_neural = gpytorch.mlls.VariationalELBO(self.likelihood, self.neural_gp, train_y.numel(),
+                                                   combine_terms=False)
+        optimizer_neural = torch.optim.Adam(self.neural_gp.parameters(), lr=0.01)
+        # This is a basic loop for training; in real applications, consider using multiple epochs
+        for i in range(50):
+            optimizer_neural.zero_grad()
+            output_neural = self.neural_gp(train_x)
+            loss_neural = -mll_neural(output_neural, train_y)
+            loss_neural.backward()
+            optimizer_neural.step()
+
+        # Train VariationalGPModel for noise
         self.noise_gp.train()
         self.noise_likelihood.train()
-
-        # Use the adam optimizer
-        optimizer = torch.optim.Adam([
-            {'params': self.model.feature_extractor.parameters()},
-            {'params': self.model.covar_module.parameters()},
-            {'params': self.model.mean_module.parameters()},
-            {'params': self.likelihood.parameters()},
-            {'params': self.noise_gp.parameters()},
-            {'params': self.noise_likelihood.parameters()}
-        ], lr=0.01)
-
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=10,
-                                                               verbose=True)
-
-        loss_function = torch.nn.MSELoss()
-
-        num_epochs = 50
-        for epoch in range(num_epochs):
-            optimizer.zero_grad()
-
-            # Predictions
-            main_output = self.model(train_x)
-            noise_output = self.noise_gp(train_x)
-
-            # Combined prediction
-            combined_output = main_output.mean + noise_output.mean
-
-            # Calculate the combined loss
-            main_loss = -self.likelihood(main_output, train_y).log_prob(train_y)
-            noise_loss = -self.noise_likelihood(noise_output, train_y).log_prob(train_y)
-            combined_loss = loss_function(combined_output, train_y)
-
-            # Weighted sum of losses
-            total_loss = main_loss + noise_loss + combined_loss
-            total_loss = total_loss.mean()
-
-            print(f"Epoch {epoch + 1}/{num_epochs} - Loss: {total_loss.item()}")
-
-            total_loss.backward()
-            optimizer.step()
-
-            # If validation set is provided, compute validation loss and pass it to scheduler
-            if validation_set_x is not None and validation_set_y is not None:
-                self.model.eval()
-                self.noise_gp.eval()
-
-                with torch.no_grad():
-                    main_val_output = self.model(validation_set_x)
-                    noise_val_output = self.noise_gp(validation_set_x)
-                    combined_val_output = main_val_output.mean + noise_val_output.mean
-                    val_loss = loss_function(combined_val_output, validation_set_y)
-
-                scheduler.step(val_loss)
-
-                self.model.train()
-                self.noise_gp.train()
-
-        self.model.eval()
-        self.likelihood.eval()
-        self.noise_gp.eval()
-        self.noise_likelihood.eval()
+        mll_variational = gpytorch.mlls.VariationalELBO(self.noise_likelihood, self.noise_gp, train_y.numel())
+        optimizer_noise = torch.optim.Adam(self.noise_gp.parameters(), lr=0.01)
+        # Again, this is a basic loop for training
+        for i in range(50):
+            optimizer_noise.zero_grad()
+            output_noise = self.noise_gp(train_x)
+            loss_noise = -mll_variational(output_noise, train_y)
+            loss_noise.backward()
+            optimizer_noise.step()
 
         return self
 
@@ -358,79 +400,25 @@ class BotorchCompatibleGP(Model, AbstractBaseModel):
         }
         torch.save(state_dict, file_path)
 
-    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any) -> 'BotorchCompatibleGP':
+    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any):
         """
-        Condition the GPyTorchCompatibleGP on new observations (X, Y) and return a new GPyTorchCompatibleGP.
+        Condition the NeuralGP and VariationalGP on new observations (X, Y)
+        and return a new BotorchCompatibleGP with the updated models.
         """
-        if self.train_x is None or self.train_y is None:
-            updated_train_x = X.to(self.device)
-            updated_train_y = Y.to(self.device)
-        else:
-            # Combine new observations with existing training data
-            updated_train_x = torch.cat([self.train_x, X], dim=0).to(self.device)
-            updated_train_y = torch.cat([self.train_y, Y], dim=0).to(self.device)
+        self.update_train_data(X, Y)
+        # Return a new instance of BotorchCompatibleGP
+        return BotorchCompatibleGP(self.data_dim, self.device)
 
-        # Create a new model with the combined data
-        data_dim = updated_train_x.shape[-1]
-        new_model = BotorchCompatibleGP(data_dim, self.device)
+    def posterior(self, X: Tensor, observation_noise: bool = False, **kwargs: Any) -> Posterior:
+        """Get the posterior from the sum_gp."""
+        mvn = self.sum_gp(X)
 
-        # Ensure that the new model carries over the necessary attributes
-        # You might have to adjust the attributes being copied based on your needs
-        new_model.model = self.model
-        new_model.likelihood = self.likelihood
-        new_model.noise_gp = self.noise_gp
-        new_model.noise_likelihood = self.noise_likelihood
+        # If observation noise should be added
+        if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
+            noise = self.likelihood.noise
+            mvn = MultivariateNormal(mvn.mean, mvn.lazy_covariance_matrix.add_diag(noise))
 
-        # Set the training data for the new model
-        new_model.train_x = updated_train_x
-        new_model.train_y = updated_train_y
-
-        return new_model
-
-    def posterior(
-            self,
-            X: Tensor,
-            output_indices: Optional[List[int]] = None,
-            observation_noise: bool = False,
-            posterior_transform: Optional[PosteriorTransform] = None,
-            **kwargs: Any,
-    ) -> Posterior:
-
-        # Ensure the model is in evaluation mode
-        self.eval()
-
-        # If your model or noise_gp have any input transformations, apply them here
-        # X_transformed = self.transform_inputs(X)
-        # For simplicity, I'm assuming no transformations:
-        X_transformed = X.to(self.device)
-
-        # Compute the primary function posterior from self.model
-        function_posterior = self.model.posterior(X_transformed)
-
-        if observation_noise:
-            # If observation noise is considered, compute the noise posterior from self.noise_gp
-            noise_posterior = self.noise_gp.posterior(X_transformed, **kwargs)
-
-            # Manually combine the mean and covariance of the two posteriors
-            combined_mean = function_posterior.mean + noise_posterior.mean
-            combined_covar = function_posterior.mvn.covariance_matrix + noise_posterior.mvn.covariance_matrix
-
-            # Construct a new posterior with the combined mean and covariance
-            combined_mvn = torch.distributions.MultivariateNormal(combined_mean, combined_covar)
-            combined_posterior = GPyTorchPosterior(combined_mvn)
-
-            # If you have any posterior transforms, apply them here
-            if posterior_transform is not None:
-                combined_posterior = posterior_transform(combined_posterior)
-
-            return combined_posterior
-
-        # If observation noise is not considered, return only the function posterior
-        # If you have any posterior transforms, apply them here
-        if posterior_transform is not None:
-            function_posterior = posterior_transform(function_posterior)
-
-        return function_posterior
+        return GPyTorchPosterior(mvn)
 
     def forward(self, x):
         # This might need modifications based on what BaseGPModel's predict method returns
