@@ -210,8 +210,6 @@ class SubsetSelect(Algorithm):
         :param f: GP model derived from BaseGPModel
         :return: Expected max value across the sampled functions for each candidate point.
         """
-        print("monte_carlo expectation")
-
         # Convert candidate set to tensor
         if isinstance(S, torch.Tensor):
             S_tensor = S.to(self.device)
@@ -231,7 +229,6 @@ class SubsetSelect(Algorithm):
         max_values = samples.max(dim=0).values
         expected_max = max_values.mean(dim=0).tolist()
 
-        print("monte carlo done")
         return expected_max
 
     def handle_first_selection(self, f: BotorchCompatibleGP):
@@ -305,7 +302,7 @@ class SubsetSelect(Algorithm):
             self.selected_subset.append(next_x)
 
             # Get the prediction using the predict method
-            y_pred = f.model(next_x)
+            y_pred = f.neural_gp(next_x)
             # If y_pred is a list (mean, std, margins), then take the mean.
             y = y_pred[0] if isinstance(y_pred, list) else y_pred
             y_pred_sample = y.sample()

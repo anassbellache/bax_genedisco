@@ -283,6 +283,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         self.return_samples = False
         self.data_dim = dim_input
         self.batch_size = batch_size
+        self.sum_likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
 
         # Initialize train_x and train_y as None
         self.train_x = None
@@ -353,19 +354,22 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
             raise ValueError("Both train_x and train_y must be provided")
 
         # Convert AbstractDataSource to torch.Tensor
-        train_x = torch.tensor(train_x.get_data(), dtype=torch.float32, device=self.device)
-        train_y = torch.tensor(train_y.get_data(), dtype=torch.float32, device=self.device)
+        train_x = torch.tensor(np.array(train_x.get_data()), dtype=torch.float32, device=self.device).squeeze(0)
+        train_y = torch.tensor(np.array(train_y.get_data()), dtype=torch.float32, device=self.device).squeeze(0)
         self.num_samples = train_y.size(0)
 
         self.sum_gp.train()
         mll_sum = gpytorch.mlls.VariationalELBO(self.sum_likelihood, self.sum_gp, train_y.numel())
         optimizer_sum = torch.optim.Adam(self.sum_gp.parameters(), lr=0.01)
+        loss_sum = 0
         for i in range(50):
-            optimizer_sum.zero_grad()
-            output_sum = self.sum_gp(train_x)
-            loss_sum = -mll_sum(output_sum, train_y)
-            loss_sum.backward()
-            optimizer_sum.step()
+            for j in range(train_x.shape[0]):
+                optimizer_sum.zero_grad()
+                output_sum = self.sum_gp(train_x[j])
+                loss_sum = -mll_sum(output_sum, train_y[j]).sum()
+                loss_sum.backward(retain_graph=True)
+                optimizer_sum.step()
+            print("Epoch {} , Loss: {}".format(i, loss_sum))
 
         return self
 
