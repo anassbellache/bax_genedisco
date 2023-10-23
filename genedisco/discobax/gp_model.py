@@ -436,9 +436,6 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         return GPyTorchPosterior(mvn)
 
     def forward(self, x):
-        return self.sum_gp(x)
-
-    def forward(self, x):
         # This might need modifications based on what BaseGPModel's predict method returns
-        pred = self.predict(x.to(self.device))
+        pred = self.sum_gp(x.to(self.device))
         return pred
