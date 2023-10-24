@@ -84,7 +84,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         eig = h_current - avg_h_fantasy
 
         # Select top points based on EIG
-        _, top_indices = torch.topk(eig, batch_size)
+        _, top_indices = torch.topk(eig.squeeze(), batch_size, dim=-1)
         flattened_top_indices = top_indices.flatten()
         selected_indices = [available_indices[i.item()] for i in flattened_top_indices]
 

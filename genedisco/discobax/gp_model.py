@@ -291,7 +291,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
 
     def predict(self, dataset_x: AbstractDataSource, batch_size: int = 256, row_names: List[AnyStr] = None) -> List[
         np.ndarray]:
-        x_tensor = torch.tensor(dataset_x.get_data(), dtype=torch.float32, device=self.device)
+        x_tensor = torch.tensor(np.array(dataset_x.get_data()), dtype=torch.float32, device=self.device)
         self.sum_gp.eval()
         self.likelihood.eval()
         self.noise_gp.eval()

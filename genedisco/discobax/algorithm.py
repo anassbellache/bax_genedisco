@@ -197,7 +197,7 @@ class SubsetSelect(Algorithm):
         self.selected_subset = []
         self.mc_samples = n_samples
         self.exe_path = dict_to_namespace({"x": [], "y": []})
-        self.input_dim = torch.tensor(X.get_data(), dtype=torch.float32).shape[-1]
+        self.input_dim = torch.tensor(np.array(X.get_data()), dtype=torch.float32).shape[-1]
 
     def initialize(self):
         self.exe_path = dict_to_namespace({"x": [], "y": []})
@@ -214,7 +214,7 @@ class SubsetSelect(Algorithm):
         if isinstance(S, torch.Tensor):
             S_tensor = S.to(self.device)
         else:
-            S_tensor = torch.tensor(S.get_data(), dtype=torch.float32, device=self.device)
+            S_tensor = torch.tensor(np.array(S.get_data()), dtype=torch.float32, device=self.device)
 
         # Set up the sampler
         mc_sampler = IIDNormalSampler(sample_shape=torch.Size([self.mc_samples]))
@@ -302,7 +302,7 @@ class SubsetSelect(Algorithm):
             self.selected_subset.append(next_x)
 
             # Get the prediction using the predict method
-            y_pred = f.neural_gp(next_x)
+            y_pred = f.sum_gp(next_x)
             # If y_pred is a list (mean, std, margins), then take the mean.
             y = y_pred[0] if isinstance(y_pred, list) else y_pred
             y_pred_sample = y.sample()
