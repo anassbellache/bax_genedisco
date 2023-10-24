@@ -21,6 +21,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
     def __init__(
             self,
+            monte_carlo_num=100
     ) -> None:
         r"""Single-outcome Expected Improvement (analytic).
 
@@ -30,6 +31,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         """
         super(DiscoBAXAdditive).__init__()
         self.device = torch.device("cpu")
+        self.monte_carlo_num = monte_carlo_num
 
     def __call__(self,
                  dataset_x: AbstractDataSource,
@@ -67,7 +69,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
                                                                                   device=self.device)
 
         # Construct fantasy models using BoTorch's fantasize method
-        sampler = IIDNormalSampler(self.xs_exe.shape[0])
+        sampler = IIDNormalSampler(self.monte_carlo_num)
         self.fmodels = self.model.fantasize(self.xs_exe, sampler)
 
         # Compute EIG using both the current model and the fantasy models

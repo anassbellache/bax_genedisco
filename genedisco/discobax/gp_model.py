@@ -327,7 +327,6 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
 
                     all_samples.append(combined_sample.cpu().numpy())
 
-                print(f"Batch {i}: {combined_mean.shape}")
 
         # Concatenate results from all batches
         pred_mean = np.concatenate(all_pred_means, axis=0)
@@ -384,6 +383,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         Returns:
             - model (BotorchCompatibleGP): The loaded model.
         """
+        print("loading model: ")
         # Load the saved state dictionary
         state_dict = torch.load(file_path)
 
@@ -413,6 +413,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         Parameters:
             - file_path (str): The path to where the model should be saved.
         """
+        print("savig model: ")
         state_dict = {
             "data_dim": self.data_dim,
             "neural_gp": self.neural_gp.state_dict(),
