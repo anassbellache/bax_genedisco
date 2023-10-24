@@ -67,7 +67,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
                                                                                   device=self.device)
 
         # Construct fantasy models using BoTorch's fantasize method
-        sampler = IIDNormalSampler(num_samples=self.xs_exe.shape[0])
+        sampler = IIDNormalSampler(self.xs_exe.shape[0])
         self.fmodels = self.model.fantasize(self.xs_exe, sampler)
 
         # Compute EIG using both the current model and the fantasy models
