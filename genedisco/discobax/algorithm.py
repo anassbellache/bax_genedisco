@@ -11,6 +11,8 @@
 import copy
 from abc import ABC, abstractmethod
 from argparse import Namespace
+from typing import List
+from tqdm import tqdm
 
 import numpy as np
 import torch
@@ -182,7 +184,7 @@ class TopK(FixedPathAlgorithm):
 
 
 class SubsetSelect(Algorithm):
-    def __init__(self, X: AbstractDataSource, device, n_samples=1000, k=3):
+    def __init__(self, X: AbstractDataSource, device, n_samples=500, k=3):
         """
             Initialize the SubsetSelect algorithm.
 
@@ -202,43 +204,63 @@ class SubsetSelect(Algorithm):
     def initialize(self):
         self.exe_path = dict_to_namespace({"x": [], "y": []})
 
-    def monte_carlo_expectation(self, S: AbstractDataSource, f: BotorchCompatibleGP):
-        """
-        Estimate the expectation of the maximum value using Monte Carlo sampling with BoTorch.
+    from tqdm import tqdm
 
-        :param S: Set of candidate points as an AbstractDataSource.
-        :param f: GP model derived from BaseGPModel
-        :return: Expected max value across the sampled functions for each candidate point.
-        """
-        # Convert candidate set to tensor
-        if isinstance(S, torch.Tensor):
-            S_tensor = S.to(self.device)
+    def monte_carlo_expectation(self, candidates: AbstractDataSource, S: List[Tensor], f: BotorchCompatibleGP):
+        if isinstance(candidates, torch.Tensor):
+            candidates_tensor = candidates.to(self.device)
         else:
-            S_tensor = torch.tensor(np.array(S.get_data()), dtype=torch.float32, device=self.device)
+            candidates_tensor = torch.tensor(np.array(candidates.get_data()), dtype=torch.float32, device=self.device)
 
         # Set up the sampler
         mc_sampler = IIDNormalSampler(sample_shape=torch.Size([self.mc_samples]))
 
-        # Sample from the posterior
-        with torch.no_grad():
-            posterior = f.posterior(S_tensor)
-            samples = mc_sampler(posterior)
-            samples = samples.squeeze(-1)  # Reshape as needed
+        expected_maxima = []
 
-        # Calculate the max value
-        max_values = samples.max(dim=0).values
-        expected_max = max_values.mean(dim=0).tolist()
+        # Convert S to tensor
+        S_tensor = torch.stack(S).to(self.device)
+        candidates_tensor = candidates_tensor.squeeze(0)
 
-        return expected_max
+        # Wrap the candidates_tensor with tqdm for progress bar
+        for candidate in tqdm(candidates_tensor, desc="Subset Select Element:"):
+            # Combine the selected subset S and the candidate
+
+            combined = torch.cat([S_tensor, candidate.unsqueeze(0)], dim=0)
+
+            # Sample from the posterior
+            with torch.no_grad():
+                posterior = f.posterior(combined)
+                samples = mc_sampler(posterior)
+                samples = samples.squeeze(-1)  # Reshape as needed
+
+            # Calculate the max value
+            max_values = samples.max(dim=0).values
+            expected_max = max_values.mean(dim=0).item()
+
+            expected_maxima.append(expected_max)
+
+        return expected_maxima
 
     def handle_first_selection(self, f: BotorchCompatibleGP):
-        # Calculate Monte Carlo expected values for entire dataset self.X
-        scores = self.monte_carlo_expectation(self.X, f)
-        TE = torch.tensor(self.X.get_data(), dtype=torch.float32, device=self.device).squeeze(0)
+        # Convert the dataset to tensor
+        TE = torch.tensor(np.array(self.X.get_data()), dtype=torch.float32, device=self.device).squeeze(0)
 
-        # Select the element with the highest score
-        scores_tensor = torch.tensor(scores, device=self.device)
-        first_selection = TE[torch.argmax(scores_tensor).item()]
+        # Get the posterior for all points in X
+        with torch.no_grad():
+            posterior = f.posterior(TE)
+            mean = posterior.mean.squeeze()
+
+        # If f has a noise model, add the expected noise to the mean.
+        # Assuming `f.noise_gp` provides the expected noise for each data point.
+        if hasattr(f, 'noise_gp') and f.noise_gp is not None:
+            noise = f.noise_gp(TE).mean.squeeze()
+            fb_out_expected = mean + noise
+        else:
+            fb_out_expected = mean
+
+        # Select the element with the highest expected fb_out value
+        first_selection_index = torch.argmax(fb_out_expected).item()
+        first_selection = TE[first_selection_index]
 
         return first_selection
 
@@ -255,11 +277,11 @@ class SubsetSelect(Algorithm):
 
         TE = torch.tensor(self.X.get_data(), dtype=torch.float32, device=self.device)
 
-        # Convert the selected subset to a tensor once
-        selected_tensor = torch.stack(
-            [torch.tensor(selected, device=self.device).float() for selected in self.selected_subset]
-        )
-        selected_tensor = selected_tensor.to(self.device)
+        # Convert each selected tensor to appropriate shape and store them in a list
+        selected_tensors = [torch.tensor(selected, device=self.device).float() for selected in
+                            self.selected_subset]
+
+        selected_tensor = torch.cat(selected_tensors, dim=0)
 
         # Create the mask based on selected subset
         mask = torch.tensor(
@@ -270,18 +292,15 @@ class SubsetSelect(Algorithm):
 
         # Extract candidates using the mask
         candidates_from_mask = TE[mask]
-        selected_tensor = selected_tensor.unsqueeze(0)
-
-        # Concatenate selected with candidates
-        concatenated_candidates = torch.cat([selected_tensor, candidates_from_mask], dim=1).to(self.device)
 
         # Calculate the scores using Monte Carlo
-        scores = self.monte_carlo_expectation(concatenated_candidates, f)
+        scores = self.monte_carlo_expectation(candidates_from_mask, self.selected_subset, f)
 
         # Select the next candidate based on highest score
         scores_tensor = torch.tensor(scores, device=self.device)
         max_index = torch.argmax(scores_tensor).item()
-        next_selection = concatenated_candidates[0, max_index]
+
+        next_selection = candidates_from_mask.squeeze()[max_index]
 
         return next_selection
 
