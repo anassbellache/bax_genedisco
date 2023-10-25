@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from slingpy import AbstractDataSource, AbstractBaseModel
 from botorch.sampling import IIDNormalSampler
-
+from tqdm import tqdm
 from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
     BaseBatchAcquisitionFunction
 from .algorithm import SubsetSelect
@@ -21,7 +21,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
     def __init__(
             self,
-            monte_carlo_num=100
+            monte_carlo_num=10
     ) -> None:
         r"""Single-outcome Expected Improvement (analytic).
 
@@ -61,33 +61,44 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.model = last_model
 
         # Get execution paths (assumed unchanged)
-        self.algo = SubsetSelect(avail_dataset_x, device=self.device)
-        exe_path = self.algo.get_exe_paths(self.model)
-        self.xs_exe, self.ys_exe = torch.tensor(np.array(exe_path.x), dtype=torch.float32,
-                                                device=self.device), torch.tensor(np.array(exe_path.y),
-                                                                                  dtype=torch.float32,
-                                                                                  device=self.device)
+        self.algo = SubsetSelect(avail_dataset_x, num_paths=self.monte_carlo_num, device=self.device)
+        exe_paths = self.algo.get_exe_paths(self.model)
+        if isinstance(exe_paths, list):
+            # handle the list case
+            self.xs_exe = torch.tensor(np.array([np.array(exe_path.x) for exe_path in exe_paths]), dtype=torch.float32, device=self.device)
+        else:
+            # handle the object case
+            self.xs_exe = torch.tensor(np.array(exe_paths.x), dtype=torch.float32, device=self.device)
 
-        # Construct fantasy models using BoTorch's fantasize method
-        sampler = IIDNormalSampler(self.monte_carlo_num)
-        self.fmodels = self.model.fantasize(self.xs_exe, sampler)
 
         # Compute EIG using both the current model and the fantasy models
-
-        # For current model
+        # For current models
         p = self.model.posterior(X)
         h_current = 0.5 * torch.log(2 * torch.pi * p.variance) + 0.5
 
-        # For fantasy models
-        pfs = self.fmodels.posterior(X)
-        h_fantasies = 0.5 * torch.log(2 * torch.pi * pfs.variance) + 0.5
-        avg_h_fantasy = torch.mean(h_fantasies, dim=-2)
+        total_eig = torch.zeros(X.shape[0], device=self.device)
 
-        eig = h_current - avg_h_fantasy
+        # Loop over each execution path
+        for i in tqdm(range(self.xs_exe.shape[0])):
+            # Construct fantasy models using BoTorch's fantasize method for this execution path
+            sampler = IIDNormalSampler(self.monte_carlo_num)
+            fmodels_path = self.model.fantasize(self.xs_exe[i], sampler)
 
-        # Select top points based on EIG
-        _, top_indices = torch.topk(eig.squeeze(), batch_size, dim=-1)
+            # For fantasy models of this execution path
+            pfs = fmodels_path.posterior(X)
+            h_fantasies = 0.5 * torch.log(2 * torch.pi * pfs.variance) + 0.5
+            avg_h_fantasy = torch.mean(h_fantasies, dim=-2)
+
+            eig_path = h_current - avg_h_fantasy
+            total_eig += eig_path
+
+        # Average the EIG over all execution paths
+        avg_eig = total_eig / self.xs_exe.shape[0]
+
+        # Select top points based on avg_eig
+        _, top_indices = torch.topk(avg_eig.squeeze(), batch_size, dim=-1)
         flattened_top_indices = top_indices.flatten()
         selected_indices = [available_indices[i.item()] for i in flattened_top_indices]
 
         return selected_indices
+

@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from argparse import Namespace
 from typing import List
 from tqdm import tqdm
-
+from joblib import Parallel, delayed
 import numpy as np
 import torch
 from torch import Tensor
@@ -183,8 +183,27 @@ class TopK(FixedPathAlgorithm):
         return dist
 
 
+def compute_expected_max(candidate, S_tensor, f, mc_samples, device):
+    assert candidate.dim() == 2, f"Expected candidate of dim 2, got {candidate.dim()} with shape {candidate.shape}"
+    assert S_tensor.dim() == 2, f"Expected S_tensor of dim 2, got {S_tensor.dim()} with shape {S_tensor.shape}"
+
+    combined = torch.cat([S_tensor, candidate], dim=0)
+
+    # Sample from the posterior
+    mc_sampler = IIDNormalSampler(sample_shape=torch.Size([mc_samples]))
+    with torch.no_grad():
+        posterior = f.posterior(combined)
+        samples = mc_sampler(posterior)
+        samples = samples.squeeze(-1)  # Reshape as needed
+
+    # Calculate the max value
+    max_values = samples.max(dim=0).values
+    expected_max = max_values.mean(dim=0).item()
+    return expected_max
+
+
 class SubsetSelect(Algorithm):
-    def __init__(self, X: AbstractDataSource, device, n_samples=500, k=3):
+    def __init__(self, X: AbstractDataSource, num_paths, device, n_samples=500, k=3):
         """
             Initialize the SubsetSelect algorithm.
 
@@ -198,13 +217,12 @@ class SubsetSelect(Algorithm):
         self.device = device
         self.selected_subset = []
         self.mc_samples = n_samples
+        self.num_paths = num_paths
         self.exe_path = dict_to_namespace({"x": [], "y": []})
         self.input_dim = torch.tensor(np.array(X.get_data()), dtype=torch.float32).shape[-1]
 
     def initialize(self):
         self.exe_path = dict_to_namespace({"x": [], "y": []})
-
-    from tqdm import tqdm
 
     def monte_carlo_expectation(self, candidates: AbstractDataSource, S: List[Tensor], f: BotorchCompatibleGP):
         if isinstance(candidates, torch.Tensor):
@@ -212,32 +230,15 @@ class SubsetSelect(Algorithm):
         else:
             candidates_tensor = torch.tensor(np.array(candidates.get_data()), dtype=torch.float32, device=self.device)
 
-        # Set up the sampler
-        mc_sampler = IIDNormalSampler(sample_shape=torch.Size([self.mc_samples]))
-
-        expected_maxima = []
-
         # Convert S to tensor
         S_tensor = torch.stack(S).to(self.device)
-        candidates_tensor = candidates_tensor.squeeze(0)
 
-        # Wrap the candidates_tensor with tqdm for progress bar
-        for candidate in tqdm(candidates_tensor, desc="Subset Select Element:"):
-            # Combine the selected subset S and the candidate
+        # Number of CPU cores to use (adjust as needed)
+        n_jobs = 64
 
-            combined = torch.cat([S_tensor, candidate.unsqueeze(0)], dim=0)
-
-            # Sample from the posterior
-            with torch.no_grad():
-                posterior = f.posterior(combined)
-                samples = mc_sampler(posterior)
-                samples = samples.squeeze(-1)  # Reshape as needed
-
-            # Calculate the max value
-            max_values = samples.max(dim=0).values
-            expected_max = max_values.mean(dim=0).item()
-
-            expected_maxima.append(expected_max)
+        # Parallelize the computation
+        expected_maxima = Parallel(n_jobs=n_jobs)(delayed(compute_expected_max)(
+            candidate, S_tensor, f, self.mc_samples, self.device) for candidate in candidates_tensor)
 
         return expected_maxima
 
@@ -275,7 +276,7 @@ class SubsetSelect(Algorithm):
             next_selection = self.handle_first_selection(f)
             return next_selection
 
-        TE = torch.tensor(self.X.get_data(), dtype=torch.float32, device=self.device)
+        TE = torch.tensor(np.array(self.X.get_data()), dtype=torch.float32, device=self.device)
 
         # Convert each selected tensor to appropriate shape and store them in a list
         selected_tensors = [torch.tensor(selected, device=self.device).float() for selected in
@@ -348,9 +349,13 @@ class SubsetSelect(Algorithm):
         """
         Get the execution paths for x values and their corresponding model predictions.
         """
-        self.initialize()
-        with torch.no_grad():
-            x = self.take_step(f)
-            while x is not None:
+        paths = []
+        for _ in tqdm(range(self.num_paths), desc="Sampling paths"):
+            self.initialize()
+            with torch.no_grad():
                 x = self.take_step(f)
-        return self.exe_path
+                while x is not None:
+                    x = self.take_step(f)
+            paths.append(copy.deepcopy(self.exe_path))
+
+        return paths

@@ -404,7 +404,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
 
     @staticmethod
     def get_save_file_extension() -> AnyStr:
-        return '.pt'
+        return 'pt'
 
     def save(self, file_path: AnyStr):
         """
