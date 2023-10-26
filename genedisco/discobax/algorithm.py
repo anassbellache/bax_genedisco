@@ -223,6 +223,7 @@ class SubsetSelect(Algorithm):
 
     def initialize(self):
         self.exe_path = dict_to_namespace({"x": [], "y": []})
+        self.selected_subset = []
 
     def monte_carlo_expectation(self, candidates: AbstractDataSource, S: List[Tensor], f: BotorchCompatibleGP):
         if isinstance(candidates, torch.Tensor):
@@ -233,7 +234,7 @@ class SubsetSelect(Algorithm):
         # Convert S to tensor
         S_tensor = torch.stack(S).to(self.device)
 
-        # Number of CPU cores to use (adjust as needed)
+        # Number of CPU cores to use
         n_jobs = 64
 
         # Parallelize the computation

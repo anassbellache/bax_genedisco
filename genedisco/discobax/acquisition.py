@@ -2,9 +2,10 @@ from typing import List, AnyStr
 
 import numpy as np
 import torch
-from slingpy import AbstractDataSource, AbstractBaseModel
 from botorch.sampling import IIDNormalSampler
+from slingpy import AbstractDataSource, AbstractBaseModel
 from tqdm import tqdm
+
 from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
     BaseBatchAcquisitionFunction
 from .algorithm import SubsetSelect
@@ -21,7 +22,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
     def __init__(
             self,
-            monte_carlo_num=10
+            monte_carlo_num=2
     ) -> None:
         r"""Single-outcome Expected Improvement (analytic).
 
@@ -59,24 +60,19 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         avail_dataset_x = dataset_x.subset(available_indices)
         X = torch.tensor(np.array(avail_dataset_x.get_data()), dtype=torch.float32, device=self.device)
         self.model = last_model
-
         # Get execution paths (assumed unchanged)
+
         self.algo = SubsetSelect(avail_dataset_x, num_paths=self.monte_carlo_num, device=self.device)
         exe_paths = self.algo.get_exe_paths(self.model)
-        if isinstance(exe_paths, list):
-            # handle the list case
-            self.xs_exe = torch.tensor(np.array([np.array(exe_path.x) for exe_path in exe_paths]), dtype=torch.float32, device=self.device)
-        else:
-            # handle the object case
-            self.xs_exe = torch.tensor(np.array(exe_paths.x), dtype=torch.float32, device=self.device)
-
-
+        all_x = [namespace.x for namespace in exe_paths]
+        self.xs_exe = torch.tensor(all_x, dtype=torch.float32, device=self.device)
         # Compute EIG using both the current model and the fantasy models
         # For current models
         p = self.model.posterior(X)
         h_current = 0.5 * torch.log(2 * torch.pi * p.variance) + 0.5
 
-        total_eig = torch.zeros(X.shape[0], device=self.device)
+        total_eig = torch.zeros(size=(1, X.shape[1], 1), device=self.device)
+
 
         # Loop over each execution path
         for i in tqdm(range(self.xs_exe.shape[0])):
