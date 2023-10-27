@@ -289,8 +289,9 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         self.train_x = None
         self.train_y = None
 
-    def predict(self, dataset_x: AbstractDataSource, batch_size: int = 256, row_names: List[AnyStr] = None) -> List[
+    def predict(self, dataset_x: AbstractDataSource, batch_size: int = 256, row_names: List[AnyStr] = None, return_samples=True) -> List[
         np.ndarray]:
+        self.return_samples = return_samples
         x_tensor = torch.tensor(np.array(dataset_x.get_data()), dtype=torch.float32, device=self.device)
         self.sum_gp.eval()
         self.likelihood.eval()
@@ -299,7 +300,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
 
         # Split the data into batches
         num_samples = x_tensor.size(0)
-        num_batches = (num_samples + self.batch_size - 1) // self.batch_size
+        num_batches = (num_samples + batch_size - 1) // batch_size
 
         all_pred_means = []
         all_pred_stds = []
@@ -307,22 +308,24 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
 
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             for i in range(num_batches):
-                start_i = i * self.batch_size
-                end_i = min((i + 1) * self.batch_size, num_samples)
+                start_i = i * batch_size
+                end_i = min((i + 1) * batch_size, num_samples)
                 batch_x = x_tensor[start_i:end_i]
 
                 main_pred = self.likelihood(self.sum_gp(batch_x.to(self.device)))
 
                 combined_mean = main_pred.mean
-                combined_stddev = main_pred.variance
+                combined_stddev = main_pred.variance.sqrt()  # Extracting standard deviation
                 all_pred_means.append(combined_mean.cpu().numpy())
                 all_pred_stds.append(combined_stddev.cpu().numpy())
 
-                # Sample from the predictive distribution if required
-                main_sample = main_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
-                combined_sample = main_sample
-
-                all_samples.append(combined_sample.cpu().numpy())
+                # Sample from the predictive distribution 10 times and average
+                samples_list = []
+                for _ in range(10):
+                    main_sample = main_pred.sample().to(self.device)
+                    samples_list.append(main_sample.cpu().numpy())
+                averaged_sample = np.mean(samples_list, axis=0)
+                all_samples.append(averaged_sample)
 
         # Concatenate results from all batches
         pred_mean = np.concatenate(all_pred_means, axis=0)
@@ -335,11 +338,11 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         # Compute the margins
         y_margins = upper_bound - lower_bound
 
-        samples = np.concatenate(all_samples, axis=0)
-        if self.return_samples:
-            return [pred_mean, pred_std, y_margins, samples]
+        averaged_samples = np.concatenate(all_samples, axis=0)
+        if not self.return_samples:
+            return [averaged_samples, pred_mean, pred_std, y_margins]
         else:
-            return samples.sum()
+            return [averaged_samples]
 
     def fit(self, train_x: AbstractDataSource, train_y: Optional[AbstractDataSource] = None,
             validation_set_x: Optional[AbstractDataSource] = None,
