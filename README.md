@@ -72,49 +72,22 @@ active_learning_loop  \
 ```
 
 
+# New Additions: Incorporating InfoBax algorithms: For that, we add three components: algorithm, acquisition, and gp_model 
+
 ### How to Evaluate a Custom Acquisition Function?
 
-To run a custom acquisition function, set `--acquisition_function_name="custom"` and `--acquisition_function_path` to the file path that contains your custom acquisition function.
+To run disco bax acquisition function.
 ```bash
 active_learning_loop  \
-    --cache_directory=/path/to/genedisco/genedisco_cache \
-    --output_directory=/path/to/genedisco/genedisco_output \
-    --model_name="bayesian_mlp" \
-    --acquisition_function_name="custom" \
-    --acquisition_function_path=/path/to/custom_acquisition_function.py \
-    --acquisition_batch_size=64 \
+    --cache_directory=/path/to/bax_genedisco/cache \
+    --output_directory=/path/to/bax_genedisco/output \
+    --model_name="base_gp" \
+    --acquisition_function_name="disco_bax" \
+    --acquisition_batch_size=10 \
     --num_active_learning_cycles=8 \
     --feature_set_name="achilles" \
-    --dataset_name="schmidt_2021_ifng" 
+    --dataset_name="schmidt_2021_ifng"
 ```
-
-...where `"/path/to/custom_acquisition_function.py"` contains code for your custom acquisition function corresponding to the [BaseBatchAcquisitionFunction interface](genedisco/active_learning_methods/acquisition_functions/base_acquisition_function.py), e.g.:
-
-```python
-import numpy as np
-from typing import AnyStr, List
-from slingpy import AbstractDataSource
-from slingpy.models.abstract_base_model import AbstractBaseModel
-from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
-    BaseBatchAcquisitionFunction
-
-class RandomBatchAcquisitionFunction(BaseBatchAcquisitionFunction):
-    def __call__(self,
-                 dataset_x: AbstractDataSource,
-                 batch_size: int,
-                 available_indices: List[AnyStr], 
-                 last_selected_indices: List[AnyStr] = None, 
-                 model: AbstractBaseModel = None,
-                 temperature: float = 0.9,
-                 ) -> List:
-        selected = np.random.choice(available_indices, size=batch_size, replace=False)
-        return selected
-```
-Note that the last class implementing `BaseBatchAcquisitionFunction` is loaded by GeneDisco if there are multiple valid acquisition functions present in the loaded file.
-
-
-## New Additions: Incorporating InfoBax algorithms: For that, we add three components: algorithm, acquisition, and gp_model 
-
 
 
 ### Algorithm
@@ -290,7 +263,64 @@ This model can be used as a replacement for standard GPs in any application wher
 
 When integrating with BoTorch, this GP model can leverage various acquisition functions provided by BoTorch, and due to its compatibility with the FantasizeMixin, it can also be used in algorithms that require constructing fantasy models. 
 
+# Documentation for the `DiscoBAXAdditive` Acquisition Function
 
+## Overview
+
+`DiscoBAXAdditive` is an acquisition function designed specifically to work with the `slingpy` and `genedisco` libraries. It is implemented to help with the process of selecting the most informative samples in a Bayesian Active Learning framework. The core idea behind this acquisition function is the calculation of the Expected Information Gain (EIG) of potential samples, which represents the expected reduction in uncertainty when the samples are added to the training set.
+
+## Process Flow
+
+The function operates in several key steps:
+
+1. **Sampling Many Paths**: Execution paths are sampled to capture different potential sequences of acquiring points. Each execution path represents a possible sequence in which the model could select data points.
+
+2. **Subset Select**: It makes use of a subset selection algorithm (`SubsetSelect`), which provides a set of execution paths based on the given dataset and model. These paths form the foundation for which the information gain is calculated.
+
+3. **Expected Information Gain (EIG)**: For each execution path, a fantasy model is created. A fantasy model is essentially a simulation: it pretends that a specific set of points has been observed, and then makes predictions based on that. The EIG is computed using both the current model and the fantasy models. 
+
+## Example Usage
+
+```python
+>>> model = SingleTaskGP(train_X, train_Y)
+>>> EIG = ExpectedInformationGain(model, algo, algo_params)
+>>> eig = EIG(test_X)
+```
+
+## Detailed Breakdown of Parameters and Methods:
+
+### Constructor:
+
+#### Args:
+- `path_sample_num`: The number of execution paths to sample. Defaults to `10`.
+
+### `__call__` Method:
+
+This method is the core of the acquisition function and is used to nominate experiments for the next learning round using Expected Information Gain.
+
+#### Args:
+
+- `dataset_x`: The dataset containing all training samples.
+  
+- `batch_size`: Size of the batch to acquire. Determines how many samples you'd want to select in this round of active learning.
+  
+- `available_indices`: A list containing the indices (or names) of the samples that were not chosen in previous rounds.
+  
+- `last_selected_indices`: The list of indices that were selected in the previous cycle. Useful for ensuring no repetition of samples.
+  
+- `last_model`: The predictive model trained using labeled samples chosen in the prior rounds.
+
+#### Returns:
+
+- A list containing the indices (or names) of the samples chosen for the next learning round.
+
+## Notes:
+
+- This class relies heavily on the `slingpy` and `genedisco` libraries, as well as the `BoTorch` library's `fantasize` method for constructing fantasy models.
+  
+- When considering the application of this acquisition function in different scenarios or with different datasets, ensure that the underlying assumptions and characteristics of the function align with the requirements and nature of the specific problem.
+
+- Always ensure that the `slingpy`, `genedisco`, and other required libraries are properly installed and imported before using this class.
 
 ## Citation
 

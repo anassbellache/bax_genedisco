@@ -319,11 +319,10 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
                 all_pred_stds.append(combined_stddev.cpu().numpy())
 
                 # Sample from the predictive distribution if required
-                if self.return_samples:
-                    main_sample = main_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
-                    combined_sample = main_sample
+                main_sample = main_pred.sample(sample_shape=torch.Size([self.num_samples])).to(self.device)
+                combined_sample = main_sample
 
-                    all_samples.append(combined_sample.cpu().numpy())
+                all_samples.append(combined_sample.cpu().numpy())
 
         # Concatenate results from all batches
         pred_mean = np.concatenate(all_pred_means, axis=0)
@@ -336,11 +335,11 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         # Compute the margins
         y_margins = upper_bound - lower_bound
 
+        samples = np.concatenate(all_samples, axis=0)
         if self.return_samples:
-            samples = np.concatenate(all_samples, axis=0)
             return [pred_mean, pred_std, y_margins, samples]
         else:
-            return [pred_mean, pred_std]
+            return samples.sum()
 
     def fit(self, train_x: AbstractDataSource, train_y: Optional[AbstractDataSource] = None,
             validation_set_x: Optional[AbstractDataSource] = None,

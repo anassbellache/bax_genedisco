@@ -23,7 +23,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
     def __init__(
             self,
-            monte_carlo_num=10
+            path_sample_num=10
     ) -> None:
         r"""Single-outcome Expected Improvement (analytic).
 
@@ -33,7 +33,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         """
         super(DiscoBAXAdditive).__init__()
         self.device = torch.device("cpu")
-        self.monte_carlo_num = monte_carlo_num
+        self.path_sample_num = path_sample_num
 
     def __call__(self,
                  dataset_x: AbstractDataSource,
@@ -63,7 +63,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.model = last_model
         # Get execution paths (assumed unchanged)
 
-        self.algo = SubsetSelect(avail_dataset_x, num_paths=self.monte_carlo_num, device=self.device, k=batch_size)
+        self.algo = SubsetSelect(avail_dataset_x, num_paths=self.path_sample_num, device=self.device, k=batch_size)
         exe_paths = self.algo.get_exe_paths(self.model)
         all_x = [namespace.x for namespace in exe_paths]
         self.xs_exe = torch.tensor(all_x, dtype=torch.float32, device=self.device)
@@ -81,7 +81,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         # Loop over each execution path
         for i in tqdm(range(self.xs_exe.shape[0])):
             # Construct fantasy models using BoTorch's fantasize method for this execution path
-            sampler = IIDNormalSampler(self.monte_carlo_num)
+            sampler = IIDNormalSampler(self.path_sample_num)
             fmodels_path = self.model.fantasize(self.xs_exe[i], sampler)
 
             # For fantasy models of this execution path
