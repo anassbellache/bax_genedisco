@@ -194,7 +194,7 @@ def compute_expected_max(candidate, S_tensor, f, mc_samples, device):
     with torch.no_grad():
         posterior = f.posterior(combined)
         samples = mc_sampler(posterior)
-        samples = samples.squeeze(-1)  # Reshape as needed
+        samples = samples.squeeze(-1)
 
     # Calculate the max value
     max_values = samples.max(dim=0).values
@@ -235,7 +235,7 @@ class SubsetSelect(Algorithm):
         S_tensor = torch.stack(S).to(self.device)
 
         # Number of CPU cores to use
-        n_jobs = 64
+        n_jobs = -1
 
         # Parallelize the computation
         expected_maxima = Parallel(n_jobs=n_jobs)(delayed(compute_expected_max)(

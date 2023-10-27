@@ -5,6 +5,7 @@ import torch
 from botorch.sampling import IIDNormalSampler
 from slingpy import AbstractDataSource, AbstractBaseModel
 from tqdm import tqdm
+from gpytorch.distributions import MultivariateNormal
 
 from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
     BaseBatchAcquisitionFunction
@@ -22,7 +23,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
     def __init__(
             self,
-            monte_carlo_num=2
+            monte_carlo_num=10
     ) -> None:
         r"""Single-outcome Expected Improvement (analytic).
 
@@ -62,13 +63,16 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.model = last_model
         # Get execution paths (assumed unchanged)
 
-        self.algo = SubsetSelect(avail_dataset_x, num_paths=self.monte_carlo_num, device=self.device)
+        self.algo = SubsetSelect(avail_dataset_x, num_paths=self.monte_carlo_num, device=self.device, k=batch_size)
         exe_paths = self.algo.get_exe_paths(self.model)
         all_x = [namespace.x for namespace in exe_paths]
         self.xs_exe = torch.tensor(all_x, dtype=torch.float32, device=self.device)
         # Compute EIG using both the current model and the fantasy models
         # For current models
-        p = self.model.posterior(X)
+        pred_mean, pred_std = self.model.predict(avail_dataset_x)
+        p_mean = torch.tensor(pred_mean, dtype=torch.float32, device=self.device)
+        p_std = torch.tensor(pred_std, dtype=torch.float32, device=self.device)
+        p = MultivariateNormal(p_mean, torch.diag(p_std ** 2))
         h_current = 0.5 * torch.log(2 * torch.pi * p.variance) + 0.5
 
         total_eig = torch.zeros(size=(1, X.shape[1], 1), device=self.device)

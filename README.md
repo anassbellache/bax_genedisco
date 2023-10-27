@@ -112,6 +112,186 @@ class RandomBatchAcquisitionFunction(BaseBatchAcquisitionFunction):
 ```
 Note that the last class implementing `BaseBatchAcquisitionFunction` is loaded by GeneDisco if there are multiple valid acquisition functions present in the loaded file.
 
+
+## New Additions: Incorporating InfoBax algorithms: For that, we add three components: algorithm, acquisition, and gp_model 
+
+
+
+### Algorithm
+
+#### Overview:
+
+`Algorithm` serves as a base class for a variety of optimization algorithms. Its main purpose is to provide a common framework and reusable methods for different algorithmic approaches. It leverages the concept of an "execution path", a series of points visited during the algorithm's execution.
+
+#### Key Methods:
+
+- `initialize()`: Resets the algorithm's state, especially the execution path.
+- `get_next_x()`: Determines the next point, x, the algorithm should evaluate. By default, it chooses random points until the execution path has 10 elements.
+- `take_step(f)`: Executes a single step of the algorithm by determining a new point and evaluating it.
+- `run_algorithm_on_f(f)`: Runs the entire algorithm on a given function.
+- `get_output()`: An abstract method to retrieve the output of the algorithm, which child classes must implement.
+- `get_copy()`: Returns a deep copy of the algorithm instance.
+- `get_exe_path_crop()`: Retrieves the current execution path.
+- `get_output_dist_fn()`: Provides a default distance function for pairs of outputs.
+
+---
+
+# Documentation for the SubsetSelect class
+
+### SubsetSelect (Derived from Algorithm)
+
+#### Overview:
+
+`SubsetSelect` is an implementation of a greedy subset selection algorithm. The primary goal is to select a subset of `k` points from a given dataset `X` that optimizes a specific criteria, in this case, based on Monte Carlo estimated scores. It's especially useful in scenarios where one wants to choose a representative subset from a larger set without evaluating the entire set.
+
+#### Key Attributes:
+
+- `k`: Number of subset points to select.
+- `X`: A finite sample set from which to select the subset.
+- `selected_subset`: List storing the currently selected points.
+- `mc_samples`: Number of Monte Carlo samples used for expectation estimation.
+- `input_dim`: Dimensionality of the data.
+- `device`: The computing device (CPU/GPU) on which calculations should run.
+- `exe_path`: The current execution path (history of selected points).
+
+#### Key Methods:
+
+- `initialize()`: Resets the state, primarily the execution path and selected subset.
+- `monte_carlo_expectation(...)`: Estimates scores for given candidates using Monte Carlo sampling. It parallelizes computation for efficiency.
+- `handle_first_selection(f)`: Manages the first point selection based on the posterior mean from a GP.
+- `select_next(f)`: Chooses the next best point to add to the subset, based on Monte Carlo scores.
+- `take_step(f)`: Executes a single step of the subset selection process.
+- `update_exe_paths(x, y)`: Updates the execution path with a new point and its associated value.
+- `get_output()`: Retrieves the current list of selected points.
+- `get_exe_paths(f)`: Produces the execution paths for different possible sequences of subset selection.
+
+---
+
+### Global Architecture and Connection to Greedy Subset Selection:
+
+The primary class, `Algorithm`, encapsulates general optimization methods, but does not prescribe a specific approach. This abstraction allows derived classes, like `SubsetSelect`, to leverage these general methods while implementing specific logic unique to a particular algorithm.
+
+`SubsetSelect` uses a greedy approach. In each step, it selects the next point that maximizes a given criterion. This criterion is based on Monte Carlo estimations of the potential value of adding each candidate point to the current subset. By always choosing the point with the highest estimated value in each step, the algorithm ensures it is always making the locally optimal choice. This greedy nature guarantees a degree of optimality for the resulting subset, but not necessarily global optimality. However, the Monte Carlo approximation ensures the approach is efficient and scalable, especially when dealing with large datasets.
+
+This modular architecture, where specific algorithmic logic is isolated in derived classes, ensures clean, maintainable code. It also makes it easier to implement and test new algorithms in the future.
+
+Sure, let's provide a more consolidated documentation by incorporating the explanations of the new classes (`VariationalGPModel`, `LargeFeatureExtractor`, `NeuralGPModel`, and `SumGPModel`) with the previously provided documentation:
+
+---
+
+# GP Models Documentation
+
+## Table of Contents:
+1. Background
+2. Models
+    - ApproximateGPyTorchModel
+    - VariationalGPModel
+    - LargeFeatureExtractor
+    - NeuralGPModel
+    - SumGPModel
+3. Usage
+4. Conclusion
+
+## 1. Background
+The provided classes define different Gaussian Process (GP) model structures. GPs are a set of flexible non-parametric methods used for regression and classification tasks. They can be combined with deep learning architectures and other strategies to provide scalable and efficient modeling of complex data.
+
+## 2. Models
+
+### ApproximateGPyTorchModel
+This model integrates `BoTorch` and `GPyTorch` libraries to build Gaussian processes. It offers functionalities such as getting the posterior and conditioning on new observations.
+
+### VariationalGPModel
+- **Purpose**: Implementation of a variational GP model for scalable Bayesian optimization.
+- **Key Components**:
+    - **Inducing Points**: Represent the GP and make it scalable.
+    - **Variational Strategy**: How the GP is approximated using the inducing points.
+    - **FantasizeMixin**: Allows the model to be conditioned on hypothetical/fantasy observations.
+
+### LargeFeatureExtractor
+- **Purpose**: Neural network-based transformation of raw data into informative features.
+- **Key Components**:
+    - **Layers**: Deep neural network for feature extraction.
+
+### NeuralGPModel
+- **Purpose**: Combines deep learning and Gaussian Processes.
+- **Key Components**:
+    - **FeatureExtractor**: Uses `LargeFeatureExtractor` to transform raw data.
+    - **Update Train Data**: Allows for dynamic updating of training data based on extracted features.
+
+### SumGPModel
+- **Purpose**: Represents a GP model that sums outputs from two other GP models: a neural GP and a noise GP.
+- **Key Components**:
+    - **Neural GP**: Captures underlying structure or signal.
+    - **Noise GP**: Captures noise or unexplained variance.
+
+## 3. Usage
+To use these models:
+1. Initialize the desired model with the required parameters.
+2. Pass the training data to the model.
+3. Make predictions on test data.
+4. If needed, condition the model on new observations to refine future predictions.
+
+
+## 4. Conclusion
+These classes provide a powerful toolkit for building and using Gaussian Process models in various configurations, including hybrid models that combine the strengths of deep learning and Gaussian Processes.
+
+---
+
+
+# Documentation for the BotorchCompatibleGP class
+
+## Overview
+
+The `BotorchCompatibleGP` class provides a Gaussian Process (GP) model compatible with the BoTorch  library. The Gaussian Process is a popular machine learning tool, especially for regression tasks, because of its non-parametric nature, meaning it can flexibly adapt to the structure in the data without a predefined fixed form. 
+
+In many scientific and engineering domains, models need to function efficiently in high-dimensional spaces, possibly involving big data. Traditional GP models, while effective, can be computationally challenging in these high-dimensional big data scenarios. This class addresses such challenges by offering a more scalable GP model using BoTorch and GPyTorch, libraries specialized in Bayesian optimization and Gaussian Processes, respectively.
+
+## Key Components
+
+### 1. `VariationalGPModel` and `NeuralGPModel`:
+
+These are assumed to be separate implementations of GP models that might differ in their architecture or functioning. The exact implementation details might vary, but in general:
+
+- `VariationalGPModel`: Usually represents a scalable approach to GPs, allowing them to handle larger datasets by approximating the true posterior with a variational distribution.
+  
+- `NeuralGPModel`: Often combines neural networks with GPs, enabling the model to capture complex patterns in data and generalize across various tasks.
+
+### 2. `SumGPModel`:
+
+This is a combination of the aforementioned `VariuralGPModel` and `NeuralGPModel`, enabling the GP to have both scalability and flexibility in modeling.
+
+### 3. `SubsetSelect Algorithm`:
+
+The reference to the subset selection algorithm in the class, although not explicitly present, can be linked with how the model is trained and used. Subsetting or sparse approximations are strategies that can make GPs more computationally tractable. The subsets of data points, often called inducing points, help in approximating the full GP, making it feasible to use in large datasets.
+
+### 4. FantasizeMixin:
+
+This mixin from BoTorch provides the capability to create "fantasy" models. In the context of Bayesian optimization, fantasy models are useful to anticipate the effect of potential future observations when selecting the next points to evaluate.
+
+## Methods Overview:
+
+1. **predict**: Predicts the outputs for given inputs. Handles large datasets by splitting them into batches and processing them separately. Can also return samples from the predictive distribution.
+
+2. **fit**: Trains the GP model on the provided dataset.
+
+3. **load**: Loads a previously saved model from a file.
+
+4. **save**: Saves the current model to a file.
+
+5. **condition_on_observations**: Creates a new GP model conditioned on additional observations.
+
+6. **posterior**: Returns the posterior distribution of the GP for the given inputs.
+
+7. **forward**: A method to get predictions from the model. This is typically used when the model is being used within a larger framework or when combined with other models.
+
+## Using BotorchCompatibleGP:
+
+This model can be used as a replacement for standard GPs in any application where scalability and efficiency in high-dimensional settings with big data are crucial. Especially when using BoTorch for Bayesian optimization tasks, this GP can be integrated seamlessly, offering better computational performance and modeling flexibility. 
+
+When integrating with BoTorch, this GP model can leverage various acquisition functions provided by BoTorch, and due to its compatibility with the FantasizeMixin, it can also be used in algorithms that require constructing fantasy models. 
+
+
+
 ## Citation
 
 Please consider citing, if you reference or use our methodology, code or results in your work:
