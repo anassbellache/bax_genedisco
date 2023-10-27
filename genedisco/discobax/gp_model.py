@@ -342,7 +342,7 @@ class BotorchCompatibleGP(Model, AbstractBaseModel, botorch.models.model.Fantasi
         if not self.return_samples:
             return [averaged_samples, pred_mean, pred_std, y_margins]
         else:
-            return [averaged_samples]
+            return averaged_samples
 
     def fit(self, train_x: AbstractDataSource, train_y: Optional[AbstractDataSource] = None,
             validation_set_x: Optional[AbstractDataSource] = None,
