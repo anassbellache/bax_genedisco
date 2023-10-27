@@ -69,12 +69,9 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.xs_exe = torch.tensor(all_x, dtype=torch.float32, device=self.device)
         # Compute EIG using both the current model and the fantasy models
         # For current models
-        pred_mean, pred_std = self.model.predict(avail_dataset_x)
-        p_mean = torch.tensor(pred_mean, dtype=torch.float32, device=self.device)
-        p_std = torch.tensor(pred_std, dtype=torch.float32, device=self.device)
-        p = MultivariateNormal(p_mean, torch.diag(p_std ** 2))
+        # For current model
+        p = self.model.posterior(X)
         h_current = 0.5 * torch.log(2 * torch.pi * p.variance) + 0.5
-
         total_eig = torch.zeros(size=(1, X.shape[1], 1), device=self.device)
 
 
