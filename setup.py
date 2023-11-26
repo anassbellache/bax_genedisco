@@ -16,35 +16,35 @@ limitations under the License.
 from distutils.core import setup
 from setuptools import find_packages
 
-with open('requirements.txt') as f:
-    install_requires = f.read().strip().split('\n')
+with open("requirements.txt") as f:
+    install_requires = f.read().strip().split("\n")
 
 setup(
-    name='genedisco',
-    version='1.0.5',
+    name="genedisco",
+    version="1.0.5",
     python_requires=">=3.8",
     packages=find_packages(),
     package_data={
         "": ["*.txt"],
         "": ["*.csv"],
     },
-    author='see README.txt',
+    author="see README.txt",
     url="https://gsk.ai/genedisco-challenge/",
-    author_email='biomedical-ai-external@gsk.com',
+    author_email="biomedical-ai-external@gsk.com",
     license="Apache-2.0",
-    long_description=open('README.md').read(),
+    long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     install_requires=install_requires,
     include_package_data=True,
     entry_points={
-        'console_scripts': [
-            'run_experiments=genedisco.apps.run_experiments_application:main',
-            'active_learning_loop=genedisco.apps.active_learning_loop:main'
+        "console_scripts": [
+            "run_experiments=genedisco.apps.run_experiments_application:main",
+            "active_learning_loop=genedisco.apps.active_learning_loop:main",
         ],
     },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: Apache Software License",
         "Operating System :: OS Independent",
-    ]
+    ],
 )

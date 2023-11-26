@@ -45,6 +45,7 @@ class Achilles(object):
 
     LICENSE: https://creativecommons.org/licenses/by/4.0/
     """
+
     FILE_URL = "https://ndownloader.figshare.com/files/25494359"
 
     @staticmethod
@@ -55,10 +56,12 @@ class Achilles(object):
             if not os.path.exists(csv_file_path):
                 sp.download_streamed(Achilles.FILE_URL, csv_file_path)
             df = pd.read_csv(csv_file_path)
-            gene_names = list(map(lambda x: x.split(" ")[0], df.columns.values.tolist()[1:]))
+            gene_names = list(
+                map(lambda x: x.split(" ")[0], df.columns.values.tolist()[1:])
+            )
             data = df.values[:, 1:].astype(float).transpose()
 
-            si = SimpleImputer(missing_values=float("nan"), strategy='mean')
+            si = SimpleImputer(missing_values=float("nan"), strategy="mean")
             data = si.fit_transform(data)
 
             name_converter = HGNCNames(save_directory)
@@ -67,12 +70,16 @@ class Achilles(object):
             data_df = pd.DataFrame(data)
             data_df.index = gene_names
             data_df = data_df.groupby(data_df.index).mean()
-            gene_names, data = data_df.index.values.tolist(), data_df.values.astype(np.float32)
+            gene_names, data = data_df.index.values.tolist(), data_df.values.astype(
+                np.float32
+            )
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   data,
-                                   "achilles",
-                                   column_names=df["DepMap_ID"].values.tolist(),
-                                   row_names=gene_names)
+            HDF5Tools.save_h5_file(
+                h5_file,
+                data,
+                "achilles",
+                column_names=df["DepMap_ID"].values.tolist(),
+                row_names=gene_names,
+            )
         data_source = HDF5DataSource(h5_file, fill_missing_value=0)
         return data_source

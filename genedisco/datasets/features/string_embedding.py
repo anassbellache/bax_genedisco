@@ -39,14 +39,19 @@ class STRINGEmbedding(object):
 
     LICENSE: https://creativecommons.org/licenses/by/4.0/
     """
+
     FILE_URL = "https://groups.csail.mit.edu/cb/mashup/vectors/string_human_mashup_vectors_d800.txt"
-    NAME_FILE_URL = "https://groups.csail.mit.edu/cb/mashup/vectors/string_human_genes.txt"
+    NAME_FILE_URL = (
+        "https://groups.csail.mit.edu/cb/mashup/vectors/string_human_genes.txt"
+    )
 
     @staticmethod
     def load_data(save_directory) -> AbstractDataSource:
         h5_file = os.path.join(save_directory, "string_embedding.h5")
         if not os.path.exists(h5_file):
-            csv_file_path = os.path.join(save_directory, "string_human_mashup_vectors_d800.txt")
+            csv_file_path = os.path.join(
+                save_directory, "string_human_mashup_vectors_d800.txt"
+            )
             if not os.path.exists(csv_file_path):
                 sp.download_streamed(STRINGEmbedding.FILE_URL, csv_file_path)
             name_file_path = os.path.join(save_directory, "string_human_genes.txt")
@@ -54,7 +59,11 @@ class STRINGEmbedding(object):
                 sp.download_streamed(STRINGEmbedding.NAME_FILE_URL, name_file_path)
 
             df = pd.read_csv(csv_file_path, index_col=None, header=None, sep="\t")
-            row_names = pd.read_csv(name_file_path, index_col=None, header=None).values[:, 0].tolist()
+            row_names = (
+                pd.read_csv(name_file_path, index_col=None, header=None)
+                .values[:, 0]
+                .tolist()
+            )
 
             data = df.values[:, 1:]
             name_converter = HGNCNames(save_directory)
@@ -63,11 +72,16 @@ class STRINGEmbedding(object):
             data = data[idx_start]
             col_names = [f"feature_{idx}" for idx in range(799)]
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   data,
-                                   "string_embedding",
-                                   column_names=col_names,
-                                   row_names=row_names)
-        data_source = HDF5DataSource(h5_file, fill_missing_value=0,
-                                     duplicate_merge_strategy=sp.FirstEntryMergeStrategy())
+            HDF5Tools.save_h5_file(
+                h5_file,
+                data,
+                "string_embedding",
+                column_names=col_names,
+                row_names=row_names,
+            )
+        data_source = HDF5DataSource(
+            h5_file,
+            fill_missing_value=0,
+            duplicate_merge_strategy=sp.FirstEntryMergeStrategy(),
+        )
         return data_source

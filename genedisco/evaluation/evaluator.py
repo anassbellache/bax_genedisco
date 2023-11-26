@@ -32,25 +32,31 @@ from genedisco.datasets.screens.zhuang_2019_nk_cancer import Zhuang2019NKCancer
 from genedisco.datasets.screens.schmidt_2021_t_cells_il2 import Schmidt2021TCellsIL2
 from genedisco.datasets.screens.sanchez_2021_neurons_tau import Sanchez2021NeuronsTau
 from genedisco.datasets.screens.schmidt_2021_t_cells_ifng import Schmidt2021TCellsIFNg
-from genedisco.datasets.features.ccle_protein_quantification import CCLEProteinQuantification
-from genedisco.datasets.screens.zhu_2021_sarscov2_host_factors import Zhu2021SARSCoV2HostFactors
+from genedisco.datasets.features.ccle_protein_quantification import (
+    CCLEProteinQuantification,
+)
+from genedisco.datasets.screens.zhu_2021_sarscov2_host_factors import (
+    Zhu2021SARSCoV2HostFactors,
+)
 
 
 class Evaluator(object):
-
     @staticmethod
-    def evaluate(top_movers_filepath: AnyStr,
-                 super_dir_to_cycle_dirs: AnyStr,
-                 metrics: List[AbstractMetric],
-                 with_print=False):
-
+    def evaluate(
+        top_movers_filepath: AnyStr,
+        super_dir_to_cycle_dirs: AnyStr,
+        metrics: List[AbstractMetric],
+        with_print=False,
+    ):
         metric_dict = OrderedDict()
         for metric in metrics:
             metric_name = metric.__class__.__name__
             value = metric.evaluate(top_movers_filepath, super_dir_to_cycle_dirs)
             if metric_name in metric_dict:
-                message = f"{metric_name} was already present in metric dict. " \
-                          f"Do you have two metrics set for evaluation with the same name?"
+                message = (
+                    f"{metric_name} was already present in metric dict. "
+                    f"Do you have two metrics set for evaluation with the same name?"
+                )
                 warn(message)
                 raise AssertionError(message)
             metric_dict[metric_name] = value
@@ -59,13 +65,15 @@ class Evaluator(object):
         return metric_dict
 
 
-def save_top_movers(top_ratio_threshold: Optional[float],
-                    feature_set_name: AnyStr,
-                    dataset_name: AnyStr,
-                    cache_directory: AnyStr,
-                    test_ratio: float,
-                    seed: int,
-                    dir_to_save: AnyStr):
+def save_top_movers(
+    top_ratio_threshold: Optional[float],
+    feature_set_name: AnyStr,
+    dataset_name: AnyStr,
+    cache_directory: AnyStr,
+    test_ratio: float,
+    seed: int,
+    dir_to_save: AnyStr,
+):
     """Save the top mover genes of the proivded dataset for future use in the evaluation
 
     Args:
@@ -77,31 +85,38 @@ def save_top_movers(top_ratio_threshold: Optional[float],
         seed: The random seed. It is used here to reproduce the dataset stratification that is done in the AL loop.
         dir_to_save (AnyStr): The  path to save the top mover genes.
     Returns:
-        full_path_to_save: The full path to where the top mover file is saved. 
+        full_path_to_save: The full path to where the top mover file is saved.
     """
     TOP_MOVER_FILENAME = "top_movers_seed_{}.pkl"
     np.random.seed(seed)
     dataset_x = get_dataset_x(feature_set_name, cache_directory)
     dataset_y = get_dataset_y(dataset_name, cache_directory)
-    avail_names = sorted(list(set(dataset_x.get_row_names()).intersection(set(dataset_y.get_row_names()))))
+    avail_names = sorted(
+        list(
+            set(dataset_x.get_row_names()).intersection(set(dataset_y.get_row_names()))
+        )
+    )
     dataset_y = dataset_y.subset(avail_names)
     dataset_x = dataset_x.subset(avail_names)
 
     avail_indices = sorted(
-        list(set(dataset_x.get_row_names()).intersection(set(dataset_y.get_row_names())))
+        list(
+            set(dataset_x.get_row_names()).intersection(set(dataset_y.get_row_names()))
+        )
     )
     test_indices = sorted(
         list(
             np.random.choice(
-                avail_indices,
-                size=int(test_ratio * len(avail_indices)),
-                replace=False)
+                avail_indices, size=int(test_ratio * len(avail_indices)), replace=False
+            )
         )
     )
     training_indices = list((set(avail_names) - set(test_indices)))
     target_values = np.squeeze(dataset_y.subset(training_indices).get_data()[0])
     num_top_hits = int(len(target_values) * top_ratio_threshold)
-    top_target_indices = np.flip(np.argsort(np.abs(np.squeeze(target_values))))[:num_top_hits]
+    top_target_indices = np.flip(np.argsort(np.abs(np.squeeze(target_values))))[
+        :num_top_hits
+    ]
     top_mover_indices = np.array(training_indices)[top_target_indices]
     PathTools.mkdir_if_not_exists(dir_to_save)
     full_path_to_save = os.path.join(dir_to_save, TOP_MOVER_FILENAME.format(seed))

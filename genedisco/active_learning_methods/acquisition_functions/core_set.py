@@ -17,16 +17,29 @@ import numpy as np
 from typing import List, AnyStr
 from sklearn.metrics import pairwise_distances
 from slingpy import AbstractDataSource, AbstractBaseModel
-from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
-    BaseBatchAcquisitionFunction
+from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import (
+    BaseBatchAcquisitionFunction,
+)
 
 
 class CoreSet(BaseBatchAcquisitionFunction):
-    def __call__(self, dataset_x: AbstractDataSource, batch_size: int, available_indices: List[AnyStr],
-                 last_selected_indices: List[AnyStr], last_model: AbstractBaseModel) -> List:
-        topmost_hidden_representation = last_model.get_embedding(dataset_x.subset(available_indices)).numpy()
-        selected_hidden_representations = last_model.get_embedding(dataset_x.subset(last_selected_indices)).numpy()
-        chosen = self.select_most_distant(topmost_hidden_representation, selected_hidden_representations, batch_size)
+    def __call__(
+        self,
+        dataset_x: AbstractDataSource,
+        batch_size: int,
+        available_indices: List[AnyStr],
+        last_selected_indices: List[AnyStr],
+        last_model: AbstractBaseModel,
+    ) -> List:
+        topmost_hidden_representation = last_model.get_embedding(
+            dataset_x.subset(available_indices)
+        ).numpy()
+        selected_hidden_representations = last_model.get_embedding(
+            dataset_x.subset(last_selected_indices)
+        ).numpy()
+        chosen = self.select_most_distant(
+            topmost_hidden_representation, selected_hidden_representations, batch_size
+        )
         return [available_indices[idx] for idx in chosen]
 
     def select_most_distant(self, options, previously_selected, num_samples):

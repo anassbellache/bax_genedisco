@@ -17,18 +17,20 @@ import numpy as np
 from typing import AnyStr, List
 from slingpy import AbstractDataSource
 from slingpy.models.abstract_base_model import AbstractBaseModel
-from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
-    BaseBatchAcquisitionFunction
+from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import (
+    BaseBatchAcquisitionFunction,
+)
 
 
 class MarginSamplingAcquisition(BaseBatchAcquisitionFunction):
-    def __call__(self,
-                 dataset_x: AbstractDataSource,
-                 select_size: int,
-                 available_indices: List[AnyStr],
-                 last_selected_indices: List[AnyStr] = None,
-                 model: AbstractBaseModel = None,
-                 ) -> List:
+    def __call__(
+        self,
+        dataset_x: AbstractDataSource,
+        select_size: int,
+        available_indices: List[AnyStr],
+        last_selected_indices: List[AnyStr] = None,
+        model: AbstractBaseModel = None,
+    ) -> List:
         avail_dataset_x = dataset_x.subset(available_indices)
         model_pedictions = model.predict(avail_dataset_x)
 
@@ -40,12 +42,11 @@ class MarginSamplingAcquisition(BaseBatchAcquisitionFunction):
         # print(pred_margins)
 
         if len(pred_mean) < select_size:
-            raise ValueError("The number of query samples exceeds"
-                             "the size of the available data.")
+            raise ValueError(
+                "The number of query samples exceeds" "the size of the available data."
+            )
 
-        numerical_selected_indices = np.flip(
-            np.argsort(pred_margins)
-        )[:select_size]
+        numerical_selected_indices = np.flip(np.argsort(pred_margins))[:select_size]
         selected_indices = [available_indices[i] for i in numerical_selected_indices]
 
         return selected_indices

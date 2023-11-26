@@ -14,14 +14,19 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import numpy as np
-from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
-    BaseBatchAcquisitionFunction
+from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import (
+    BaseBatchAcquisitionFunction,
+)
 
 
 class RandomBatchAcquisitionFunction(BaseBatchAcquisitionFunction):
-    def __call__(self, dataset_x, batch_size, available_indices, last_selected_indices, last_model):
+    def __call__(
+        self,
+        dataset_x,
+        batch_size,
+        available_indices,
+        last_selected_indices,
+        last_model,
+    ):
         selected = np.random.choice(available_indices, size=batch_size, replace=False)
         return selected
-
-
-

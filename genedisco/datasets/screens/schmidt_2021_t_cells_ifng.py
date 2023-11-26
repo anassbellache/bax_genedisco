@@ -36,6 +36,7 @@ class Schmidt2021TCellsIFNg(object):
 
     LICENSE: https://www.ncbi.nlm.nih.gov/geo/info/disclaimer.html
     """
+
     @staticmethod
     def load_data(save_directory) -> AbstractDataSource:
         h5_file = os.path.join(save_directory, "schmidt_2021_ifng.h5")
@@ -58,12 +59,18 @@ class Schmidt2021TCellsIFNg(object):
 
             # Merge duplicate indices by averaging
             df = df.groupby(df.index).mean()
-            gene_names, data = df.index.values.tolist(), df[['pos|lfc']].values.astype(np.float32)
+            gene_names, data = df.index.values.tolist(), df[["pos|lfc"]].values.astype(
+                np.float32
+            )
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   data,
-                                   "schmidt_2021_ifng",
-                                   column_names=["log-fold-change"],
-                                   row_names=gene_names)
-        data_source = HDF5DataSource(h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy())
+            HDF5Tools.save_h5_file(
+                h5_file,
+                data,
+                "schmidt_2021_ifng",
+                column_names=["log-fold-change"],
+                row_names=gene_names,
+            )
+        data_source = HDF5DataSource(
+            h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy()
+        )
         return data_source

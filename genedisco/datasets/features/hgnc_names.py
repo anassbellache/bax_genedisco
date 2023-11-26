@@ -40,8 +40,12 @@ class HGNCNames(object):
         gene_names = data.index.values.tolist()
         return gene_names
 
-    def get_hgnc_mapping(self, from_id: AnyStr = "uniprot_ids", to_id: AnyStr = "symbol",
-                         split_symbol: AnyStr = "|"):
+    def get_hgnc_mapping(
+        self,
+        from_id: AnyStr = "uniprot_ids",
+        to_id: AnyStr = "symbol",
+        split_symbol: AnyStr = "|",
+    ):
         cache_entry_name = f"{from_id}${to_id}"
         if cache_entry_name not in self.hgnc_mappings:
             tsv_file = self.get_hgnc_master_file()
@@ -92,7 +96,9 @@ class HGNCNames(object):
     def update_outdated_gene_names(self, row_names, verbose: bool = False):
         row_names = list(row_names)
         for other_id_name in ["prev_symbol", "alias_symbol"]:
-            previous_mapping = self.get_hgnc_mapping(to_id="symbol", from_id=other_id_name)
+            previous_mapping = self.get_hgnc_mapping(
+                to_id="symbol", from_id=other_id_name
+            )
             for idx, row_name in enumerate(row_names):
                 before = row_name
                 if row_name in previous_mapping:

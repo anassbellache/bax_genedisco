@@ -31,27 +31,34 @@ class Zhuang2019NKCancer(object):
 
     LICENSE: https://creativecommons.org/licenses/by/4.0/
     """
+
     @staticmethod
     def load_data(save_directory) -> AbstractDataSource:
         h5_file = os.path.join(save_directory, "zhuang_2019.h5")
         if not os.path.exists(h5_file):
             dir_path = os.path.dirname(os.path.realpath(__file__))
-            d1_file_path = os.path.join(dir_path, "zhuang_2019_low_selection.gene_summary.txt")
+            d1_file_path = os.path.join(
+                dir_path, "zhuang_2019_low_selection.gene_summary.txt"
+            )
             df = pd.read_csv(d1_file_path, sep="\t", index_col="Gene")
 
-            gene_names, data = \
-                df.index.values.tolist(), \
-                (df[['Rep1|z']].values + df[['Rep2|z']].values).mean(axis=-1, keepdims=True).astype(np.float32)
+            gene_names, data = df.index.values.tolist(), (
+                df[["Rep1|z"]].values + df[["Rep2|z"]].values
+            ).mean(axis=-1, keepdims=True).astype(np.float32)
 
             name_converter = HGNCNames(save_directory)
             gene_names = name_converter.update_outdated_gene_names(gene_names)
             gene_names, idx_start = np.unique(gene_names, return_index=True)
             data = data[idx_start]
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   data,
-                                   "zhuang_2019",
-                                   column_names=["log-fold-change"],
-                                   row_names=gene_names)
-        data_source = HDF5DataSource(h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy())
+            HDF5Tools.save_h5_file(
+                h5_file,
+                data,
+                "zhuang_2019",
+                column_names=["log-fold-change"],
+                row_names=gene_names,
+            )
+        data_source = HDF5DataSource(
+            h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy()
+        )
         return data_source

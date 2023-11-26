@@ -26,24 +26,26 @@ from genedisco.apps.single_cycle_application import SingleCycleApplication
 
 
 class RunExperimentsApplication(sp.AbstractBaseApplication):
-    def __init__(self,
-                 output_directory: AnyStr,
-                 cache_directory: AnyStr,
-                 model_name: AnyStr = "bayesian_mlp",
-                 acquisition_function_path: AnyStr = None,
-                 max_num_jobs: int = 90,
-                 seed: int = 909,
-                 single_run: bool = True,
-                 hyperopt_children: bool = True,
-                 num_random_seeds: int = 5,
-                 num_active_learning_cycles: int = 20,
-                 acquisition_batch_size: int = 256,
-                 schedule_on_slurm: bool = False,
-                 schedule_children_on_slurm: bool = False,
-                 remote_execution_time_limit_days: int = 5,
-                 remote_execution_mem_limit_in_mb: int = 8048,
-                 remote_execution_virtualenv_path: AnyStr = "",
-                 remote_execution_num_cpus: int = 1):
+    def __init__(
+        self,
+        output_directory: AnyStr,
+        cache_directory: AnyStr,
+        model_name: AnyStr = "bayesian_mlp",
+        acquisition_function_path: AnyStr = None,
+        max_num_jobs: int = 90,
+        seed: int = 909,
+        single_run: bool = True,
+        hyperopt_children: bool = True,
+        num_random_seeds: int = 5,
+        num_active_learning_cycles: int = 20,
+        acquisition_batch_size: int = 256,
+        schedule_on_slurm: bool = False,
+        schedule_children_on_slurm: bool = False,
+        remote_execution_time_limit_days: int = 5,
+        remote_execution_mem_limit_in_mb: int = 8048,
+        remote_execution_virtualenv_path: AnyStr = "",
+        remote_execution_num_cpus: int = 1,
+    ):
         self.cache_directory = cache_directory
         self.model_name = model_name
         self.acquisition_function_path = acquisition_function_path
@@ -64,7 +66,7 @@ class RunExperimentsApplication(sp.AbstractBaseApplication):
             remote_execution_time_limit_days=remote_execution_time_limit_days,
             remote_execution_mem_limit_in_mb=remote_execution_mem_limit_in_mb,
             remote_execution_virtualenv_path=remote_execution_virtualenv_path,
-            remote_execution_num_cpus=remote_execution_num_cpus
+            remote_execution_num_cpus=remote_execution_num_cpus,
         )
 
     def load_data(self) -> Dict[AnyStr, AbstractDataSource]:
@@ -75,31 +77,42 @@ class RunExperimentsApplication(sp.AbstractBaseApplication):
 
     @staticmethod
     def parallel_run_wrapper(args, self_reference):
-        seed, baseline, acqfunc_path, dataset, feature_set, model_output_directory = args
-        app = ActiveLearningLoop(seed=seed,
-                                 num_active_learning_cycles=self_reference.num_active_learning_cycles,
-                                 acquisition_batch_size=self_reference.acquisition_batch_size,
-                                 acquisition_function_name=baseline,
-                                 acquisition_function_path = acqfunc_path,
-                                 hyperopt_children=self_reference.hyperopt_children,
-                                 dataset_name=dataset,
-                                 feature_set_name=feature_set,
-                                 schedule_on_slurm=self_reference.schedule_children_on_slurm,
-                                 schedule_children_on_slurm=self_reference.schedule_children_on_slurm,
-                                 remote_execution_time_limit_days=self_reference.remote_execution_time_limit_days,
-                                 remote_execution_mem_limit_in_mb=self_reference.remote_execution_mem_limit_in_mb,
-                                 remote_execution_num_cpus=self_reference.remote_execution_num_cpus,
-                                 remote_execution_virtualenv_path=self_reference.remote_execution_virtualenv_path,
-                                 model_name=self_reference.model_name,
-                                 output_directory=model_output_directory,
-                                 cache_directory=self_reference.cache_directory)
+        (
+            seed,
+            baseline,
+            acqfunc_path,
+            dataset,
+            feature_set,
+            model_output_directory,
+        ) = args
+        app = ActiveLearningLoop(
+            seed=seed,
+            num_active_learning_cycles=self_reference.num_active_learning_cycles,
+            acquisition_batch_size=self_reference.acquisition_batch_size,
+            acquisition_function_name=baseline,
+            acquisition_function_path=acqfunc_path,
+            hyperopt_children=self_reference.hyperopt_children,
+            dataset_name=dataset,
+            feature_set_name=feature_set,
+            schedule_on_slurm=self_reference.schedule_children_on_slurm,
+            schedule_children_on_slurm=self_reference.schedule_children_on_slurm,
+            remote_execution_time_limit_days=self_reference.remote_execution_time_limit_days,
+            remote_execution_mem_limit_in_mb=self_reference.remote_execution_mem_limit_in_mb,
+            remote_execution_num_cpus=self_reference.remote_execution_num_cpus,
+            remote_execution_virtualenv_path=self_reference.remote_execution_virtualenv_path,
+            model_name=self_reference.model_name,
+            output_directory=model_output_directory,
+            cache_directory=self_reference.cache_directory,
+        )
         app.run()
         return None
 
     def get_model(self) -> sp.AbstractBaseModel:
         return None
 
-    def train_model(self, model: sp.AbstractBaseModel) -> Optional[sp.AbstractBaseModel]:
+    def train_model(
+        self, model: sp.AbstractBaseModel
+    ) -> Optional[sp.AbstractBaseModel]:
         acqfunc_path = self.acquisition_function_path
         random_state = np.random.RandomState(self.seed)
         baselines = ActiveLearningLoop.ACQUISITION_FUNCTIONS
@@ -109,32 +122,60 @@ class RunExperimentsApplication(sp.AbstractBaseApplication):
 
         arg_list = []
         for dataset in datasets:
-            dataset_output_directory = os.path.join(self.output_directory, f"data_{dataset}")
+            dataset_output_directory = os.path.join(
+                self.output_directory, f"data_{dataset}"
+            )
             PathTools.mkdir_if_not_exists(dataset_output_directory)
 
             for feature_set in feature_sets:
-                feature_output_directory = os.path.join(dataset_output_directory, f"feat_{feature_set}")
+                feature_output_directory = os.path.join(
+                    dataset_output_directory, f"feat_{feature_set}"
+                )
                 PathTools.mkdir_if_not_exists(feature_output_directory)
 
                 for baseline in baselines:
-                    baseline_output_directory = os.path.join(feature_output_directory, f"acq_{baseline}")
+                    baseline_output_directory = os.path.join(
+                        feature_output_directory, f"acq_{baseline}"
+                    )
                     PathTools.mkdir_if_not_exists(baseline_output_directory)
 
                     for seed in random_seeds:
-                        model_output_directory = os.path.join(baseline_output_directory, f"seed_{seed}")
-                        arg_list.append((seed, baseline, acqfunc_path, dataset, feature_set, model_output_directory))
+                        model_output_directory = os.path.join(
+                            baseline_output_directory, f"seed_{seed}"
+                        )
+                        arg_list.append(
+                            (
+                                seed,
+                                baseline,
+                                acqfunc_path,
+                                dataset,
+                                feature_set,
+                                model_output_directory,
+                            )
+                        )
 
         max_num_processes = self.max_num_jobs
         num_processes = min(len(arg_list), max_num_processes)
         if num_processes == 1:
             outputs = []
             for arg in arg_list:
-                outputs.append(RunExperimentsApplication.parallel_run_wrapper(arg, self_reference=self))
+                outputs.append(
+                    RunExperimentsApplication.parallel_run_wrapper(
+                        arg, self_reference=self
+                    )
+                )
         else:
             with Pool(processes=num_processes) as pool:
-                outputs = list(pool.imap_unordered(
-                    partial(RunExperimentsApplication.parallel_run_wrapper, self_reference=self),
-                    arg_list, chunksize=1))
+                outputs = list(
+                    pool.imap_unordered(
+                        partial(
+                            RunExperimentsApplication.parallel_run_wrapper,
+                            self_reference=self,
+                        ),
+                        arg_list,
+                        chunksize=1,
+                    )
+                )
         return None
 
 

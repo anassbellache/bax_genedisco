@@ -21,13 +21,14 @@ from slingpy.models.abstract_base_model import AbstractBaseModel
 
 class BaseBatchAcquisitionFunction(object):
     @abstractmethod
-    def __call__(self,
-                 dataset_x: AbstractDataSource,
-                 batch_size: int,
-                 available_indices: List[AnyStr],
-                 last_selected_indices: List[AnyStr],
-                 last_model: AbstractBaseModel,
-                 ) -> List:
+    def __call__(
+        self,
+        dataset_x: AbstractDataSource,
+        batch_size: int,
+        available_indices: List[AnyStr],
+        last_selected_indices: List[AnyStr],
+        last_model: AbstractBaseModel,
+    ) -> List:
         """
         Nominate experiments for the next learning round.
 

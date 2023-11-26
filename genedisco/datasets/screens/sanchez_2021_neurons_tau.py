@@ -31,6 +31,7 @@ class Sanchez2021NeuronsTau(object):
 
     LICENSE: https://creativecommons.org/licenses/by/4.0/
     """
+
     @staticmethod
     def load_data(save_directory) -> AbstractDataSource:
         h5_file = os.path.join(save_directory, "sanchez_2021_neurons_tau.h5")
@@ -39,17 +40,23 @@ class Sanchez2021NeuronsTau(object):
             csv_file_path = os.path.join(dir_path, "sanchezetal2021_21days.csv")
             df = pd.read_csv(csv_file_path, sep=",", index_col="Symbol")
 
-            gene_names, data = df.index.values.tolist(), df[['RSA_Down']].values.astype(np.float32)
+            gene_names, data = df.index.values.tolist(), df[["RSA_Down"]].values.astype(
+                np.float32
+            )
 
             name_converter = HGNCNames(save_directory)
             gene_names = name_converter.update_outdated_gene_names(gene_names)
             gene_names, idx_start = np.unique(gene_names, return_index=True)
             data = data[idx_start]
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   -data,
-                                   "sanchez_2021_neurons_tau",
-                                   column_names=["RSA"],
-                                   row_names=gene_names)
-        data_source = HDF5DataSource(h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy())
+            HDF5Tools.save_h5_file(
+                h5_file,
+                -data,
+                "sanchez_2021_neurons_tau",
+                column_names=["RSA"],
+                row_names=gene_names,
+            )
+        data_source = HDF5DataSource(
+            h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy()
+        )
         return data_source

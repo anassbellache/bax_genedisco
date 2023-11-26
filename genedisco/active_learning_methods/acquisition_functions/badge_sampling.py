@@ -18,14 +18,23 @@ import numpy as np
 from typing import List, AnyStr
 from sklearn.metrics import pairwise_distances
 from slingpy import AbstractDataSource, AbstractBaseModel
-from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import \
-    BaseBatchAcquisitionFunction
+from genedisco.active_learning_methods.acquisition_functions.base_acquisition_function import (
+    BaseBatchAcquisitionFunction,
+)
 
 
 class BadgeSampling(BaseBatchAcquisitionFunction):
-    def __call__(self, dataset_x: AbstractDataSource, batch_size: int, available_indices: List[AnyStr],
-                 last_selected_indices: List[AnyStr], last_model: AbstractBaseModel) -> List:
-        gradient_embedding = last_model.get_gradient_embedding(dataset_x.subset(available_indices)).numpy()
+    def __call__(
+        self,
+        dataset_x: AbstractDataSource,
+        batch_size: int,
+        available_indices: List[AnyStr],
+        last_selected_indices: List[AnyStr],
+        last_model: AbstractBaseModel,
+    ) -> List:
+        gradient_embedding = last_model.get_gradient_embedding(
+            dataset_x.subset(available_indices)
+        ).numpy()
         chosen = BadgeSampling.kmeans_initialise(gradient_embedding, batch_size)
         selected = [available_indices[idx] for idx in chosen]
         return selected
@@ -35,20 +44,26 @@ class BadgeSampling(BaseBatchAcquisitionFunction):
         ind = np.argmax([np.linalg.norm(s, 2) for s in gradient_embedding])
         mu = [gradient_embedding[ind]]
         indsAll = [ind]
-        centInds = [0.] * len(gradient_embedding)
+        centInds = [0.0] * len(gradient_embedding)
         cent = 0
         while len(mu) < k:
             if len(mu) == 1:
                 D2 = pairwise_distances(gradient_embedding, mu).ravel().astype(float)
             else:
-                newD = pairwise_distances(gradient_embedding, [mu[-1]]).ravel().astype(float)
+                newD = (
+                    pairwise_distances(gradient_embedding, [mu[-1]])
+                    .ravel()
+                    .astype(float)
+                )
                 for i in range(len(gradient_embedding)):
                     if D2[i] > newD[i]:
                         centInds[i] = cent
                         D2[i] = newD[i]
             D2 = D2.ravel().astype(float)
-            Ddist = (D2 ** 2) / sum(D2 ** 2)
-            customDist = scipy.stats.rv_discrete(name='custm', values=(np.arange(len(D2)), Ddist))
+            Ddist = (D2**2) / sum(D2**2)
+            customDist = scipy.stats.rv_discrete(
+                name="custm", values=(np.arange(len(D2)), Ddist)
+            )
             ind = customDist.rvs(size=1)[0]
             mu.append(gradient_embedding[ind])
             indsAll.append(ind)

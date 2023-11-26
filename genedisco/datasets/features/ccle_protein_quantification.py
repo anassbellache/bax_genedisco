@@ -45,27 +45,43 @@ class CCLEProteinQuantification(object):
 
     LICENSE: https://portals.broadinstitute.org/ccle/about
     """
-    FILE_URL = "https://gygi.hms.harvard.edu/data/ccle/protein_quant_current_normalized.csv.gz"
+
+    FILE_URL = (
+        "https://gygi.hms.harvard.edu/data/ccle/protein_quant_current_normalized.csv.gz"
+    )
 
     @staticmethod
     def load_data(save_directory) -> AbstractDataSource:
         h5_file = os.path.join(save_directory, "ccle_protein_quantification.h5")
         if not os.path.exists(h5_file):
-            gz_file_path = os.path.join(save_directory, "ccle_protein_quantification.csv.gz")
+            gz_file_path = os.path.join(
+                save_directory, "ccle_protein_quantification.csv.gz"
+            )
             if not os.path.exists(gz_file_path):
                 sp.download_streamed(CCLEProteinQuantification.FILE_URL, gz_file_path)
-            df = pd.read_csv(gz_file_path, compression='gzip',
-                             index_col="Gene_Symbol")
-            excluded_columns = ["Protein_Id", "Description", "Group_ID", "Uniprot", "Uniprot_Acc"]
-            excluded_indices = [df.columns.values.tolist().index(name) for name in excluded_columns]
-            included_indices = list(sorted(set(list(range(len(df.columns)))) - set(excluded_indices)))
+            df = pd.read_csv(gz_file_path, compression="gzip", index_col="Gene_Symbol")
+            excluded_columns = [
+                "Protein_Id",
+                "Description",
+                "Group_ID",
+                "Uniprot",
+                "Uniprot_Acc",
+            ]
+            excluded_indices = [
+                df.columns.values.tolist().index(name) for name in excluded_columns
+            ]
+            included_indices = list(
+                sorted(set(list(range(len(df.columns)))) - set(excluded_indices))
+            )
             data = df.values[:, included_indices].astype(float)
 
-            si = SimpleImputer(missing_values=float("nan"), strategy='mean')
+            si = SimpleImputer(missing_values=float("nan"), strategy="mean")
             data = si.fit_transform(data)
 
             row_names = df.index.values.tolist()
-            name_missing_indices = np.where(list(map(lambda x: isinstance(x, float) and np.isnan(x), row_names)))[0]
+            name_missing_indices = np.where(
+                list(map(lambda x: isinstance(x, float) and np.isnan(x), row_names))
+            )[0]
             for idx in name_missing_indices:
                 row_names[idx] = ""
 
@@ -75,11 +91,16 @@ class CCLEProteinQuantification(object):
             data = data[idx_start]
             col_names = df.columns.values[included_indices].tolist()
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   data,
-                                   "ccle_protein_quantification",
-                                   column_names=col_names,
-                                   row_names=row_names)
-        data_source = HDF5DataSource(h5_file, fill_missing_value=0,
-                                     duplicate_merge_strategy=sp.FirstEntryMergeStrategy())
+            HDF5Tools.save_h5_file(
+                h5_file,
+                data,
+                "ccle_protein_quantification",
+                column_names=col_names,
+                row_names=row_names,
+            )
+        data_source = HDF5DataSource(
+            h5_file,
+            fill_missing_value=0,
+            duplicate_merge_strategy=sp.FirstEntryMergeStrategy(),
+        )
         return data_source

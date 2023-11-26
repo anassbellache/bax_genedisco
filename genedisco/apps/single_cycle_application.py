@@ -33,18 +33,19 @@ from genedisco.datasets.screens.zhuang_2019_nk_cancer import Zhuang2019NKCancer
 from genedisco.datasets.screens.schmidt_2021_t_cells_il2 import Schmidt2021TCellsIL2
 from genedisco.datasets.screens.sanchez_2021_neurons_tau import Sanchez2021NeuronsTau
 from genedisco.datasets.screens.schmidt_2021_t_cells_ifng import Schmidt2021TCellsIFNg
-from genedisco.datasets.features.ccle_protein_quantification import CCLEProteinQuantification
-from genedisco.datasets.screens.zhu_2021_sarscov2_host_factors import Zhu2021SARSCoV2HostFactors
+from genedisco.datasets.features.ccle_protein_quantification import (
+    CCLEProteinQuantification,
+)
+from genedisco.datasets.screens.zhu_2021_sarscov2_host_factors import (
+    Zhu2021SARSCoV2HostFactors,
+)
 
 SklearnRandomForestRegressor = meta_models.SklearnRandomForestRegressor
 
 
-def update_dictionary_keys_with_prefixes(input_dict: Dict[AnyStr, Any],
-                                         prefix: AnyStr):
+def update_dictionary_keys_with_prefixes(input_dict: Dict[AnyStr, Any], prefix: AnyStr):
     """Adds a prefix to the keys of a dictionary."""
-    output_dict = dict(
-        (prefix + key, value) for (key, value) in input_dict.items()
-    )
+    output_dict = dict((prefix + key, value) for (key, value) in input_dict.items())
     return output_dict
 
 
@@ -52,56 +53,58 @@ class CustomLoss(sp.TorchLoss):
     def __init__(self):
         self.loss_fn = torch.nn.MSELoss()
 
-    def __call__(self,
-                 y_pred: List[torch.Tensor],
-                 y_true: List[torch.Tensor]
-                 ) -> torch.Tensor:
+    def __call__(
+        self, y_pred: List[torch.Tensor], y_true: List[torch.Tensor]
+    ) -> torch.Tensor:
         loss = self.loss_fn(y_pred[0], y_true[0].float())
         return loss
 
 
 class SingleCycleApplication(sp.AbstractBaseApplication):
     DATASET_NAMES = [
-        "shifrut_2018", "schmidt_2021_ifng",
-        "schmidt_2021_il2", "zhuang_2019_nk",
-        "sanchez_2021_tau", "zhu_2021_sarscov2"
+        "shifrut_2018",
+        "schmidt_2021_ifng",
+        "schmidt_2021_il2",
+        "zhuang_2019_nk",
+        "sanchez_2021_tau",
+        "zhu_2021_sarscov2",
     ]
 
     FEATURE_SET_NAMES = ["achilles", "ccle", "string"]
 
     def __init__(
-            self,
-            dataset_name: AnyStr = DATASET_NAMES[0],
-            feature_set_name: AnyStr = FEATURE_SET_NAMES[0],
-            output_directory: AnyStr = "",
-            cache_directory: AnyStr = "",
-            schedule_on_slurm: bool = False,
-            remote_execution_time_limit_days: int = 3,
-            remote_execution_mem_limit_in_mb: int = 2048,
-            remote_execution_virtualenv_path: AnyStr = "",
-            remote_execution_num_cpus: int = 1,
-            split_index_outer: int = 0,
-            split_index_inner: int = 0,
-            num_splits_outer: int = 2,
-            num_splits_inner: int = 2,
-            model_name: AnyStr = "mlp",
-            evaluate_against: AnyStr = "test",
-            selected_indices_file_path: AnyStr = "",
-            test_indices_file_path: AnyStr = "",
-            train_ratio: float = 0.8,
-            single_run: bool = True,
-            hyperopt: bool = False,
-            num_hyperopt_runs: int = 15,
-            hyperopt_offset: int = 0,
-            hyperopt_metric_name: AnyStr = "MeanAbsoluteError",
-            train: bool = True,
-            rf_max_depth: int = -1,  # randomforest hyperparams
-            rf_num_estimators: int = 100,  # ensemble_model_hyperparms
-            dn_num_layers: int = 2,  # deep net hyperparams
-            dn_hidden_layer_size: int = 16,  # deep net hyperparams
-            top_movers_filepath: AnyStr = "",
-            super_dir_to_cycle_dirs: AnyStr = "",
-            seed: int = 0,
+        self,
+        dataset_name: AnyStr = DATASET_NAMES[0],
+        feature_set_name: AnyStr = FEATURE_SET_NAMES[0],
+        output_directory: AnyStr = "",
+        cache_directory: AnyStr = "",
+        schedule_on_slurm: bool = False,
+        remote_execution_time_limit_days: int = 3,
+        remote_execution_mem_limit_in_mb: int = 2048,
+        remote_execution_virtualenv_path: AnyStr = "",
+        remote_execution_num_cpus: int = 1,
+        split_index_outer: int = 0,
+        split_index_inner: int = 0,
+        num_splits_outer: int = 2,
+        num_splits_inner: int = 2,
+        model_name: AnyStr = "mlp",
+        evaluate_against: AnyStr = "test",
+        selected_indices_file_path: AnyStr = "",
+        test_indices_file_path: AnyStr = "",
+        train_ratio: float = 0.8,
+        single_run: bool = True,
+        hyperopt: bool = False,
+        num_hyperopt_runs: int = 15,
+        hyperopt_offset: int = 0,
+        hyperopt_metric_name: AnyStr = "MeanAbsoluteError",
+        train: bool = True,
+        rf_max_depth: int = -1,  # randomforest hyperparams
+        rf_num_estimators: int = 100,  # ensemble_model_hyperparms
+        dn_num_layers: int = 2,  # deep net hyperparams
+        dn_hidden_layer_size: int = 16,  # deep net hyperparams
+        top_movers_filepath: AnyStr = "",
+        super_dir_to_cycle_dirs: AnyStr = "",
+        seed: int = 0,
     ):
         self.model_hyperparams = {
             "rf_max_depth": rf_max_depth,
@@ -150,7 +153,7 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
             remote_execution_time_limit_days=remote_execution_time_limit_days,
             remote_execution_virtualenv_path=remote_execution_virtualenv_path,
             remote_execution_num_cpus=remote_execution_num_cpus,
-            remote_execution_mem_limit_in_mb=remote_execution_mem_limit_in_mb
+            remote_execution_mem_limit_in_mb=remote_execution_mem_limit_in_mb,
         )
 
     def get_metrics(self, set_name: AnyStr) -> List[sp.AbstractMetric]:
@@ -159,12 +162,18 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
             sp.metrics.RootMeanSquaredError(),
             sp.metrics.SymmetricMeanAbsolutePercentageError(),
             sp.metrics.SpearmanRho(),
-            hitratio.HitRatio()
+            hitratio.HitRatio(),
         ]
 
-    def evaluate_model(self, model: AbstractBaseModel, dataset_x: AbstractDataSource, dataset_y: AbstractDataSource,
-                       with_print: bool = True, set_name: AnyStr = "", threshold=None) \
-            -> Dict[AnyStr, Union[float, List[float]]]:
+    def evaluate_model(
+        self,
+        model: AbstractBaseModel,
+        dataset_x: AbstractDataSource,
+        dataset_y: AbstractDataSource,
+        with_print: bool = True,
+        set_name: AnyStr = "",
+        threshold=None,
+    ) -> Dict[AnyStr, Union[float, List[float]]]:
         """
         Evaluates model performance.
         Because of the HitRatio metric does not follow the same pattern of the supervised learning evaluation
@@ -188,15 +197,37 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
             hitratio_metric_dic = Evaluator_HitRatio.evaluate(
                 top_movers_filepath=self.top_movers_filepath,
                 super_dir_to_cycle_dirs=self.super_dir_to_cycle_dirs,
-                metrics=[metric for metric in all_metrics if metric.__class__.__name__ == "HitRatio"],
+                metrics=[
+                    metric
+                    for metric in all_metrics
+                    if metric.__class__.__name__ == "HitRatio"
+                ],
             )
-            all_metrics_except_hitratio = [metric for metric in all_metrics if metric.__class__.__name__ != "HitRatio"]
-            other_metrics_dic = Evaluator.evaluate(model, dataset_x, dataset_y, all_metrics_except_hitratio,
-                                                   with_print=with_print, set_name=set_name, threshold=threshold)
+            all_metrics_except_hitratio = [
+                metric
+                for metric in all_metrics
+                if metric.__class__.__name__ != "HitRatio"
+            ]
+            other_metrics_dic = Evaluator.evaluate(
+                model,
+                dataset_x,
+                dataset_y,
+                all_metrics_except_hitratio,
+                with_print=with_print,
+                set_name=set_name,
+                threshold=threshold,
+            )
             all_metrics_dic = {**hitratio_metric_dic, **other_metrics_dic}
         else:
-            all_metrics_dic = Evaluator.evaluate(model, dataset_x, dataset_y, all_metrics,
-                                                 with_print=with_print, set_name=set_name, threshold=threshold)
+            all_metrics_dic = Evaluator.evaluate(
+                model,
+                dataset_x,
+                dataset_y,
+                all_metrics,
+                with_print=with_print,
+                set_name=set_name,
+                threshold=threshold,
+            )
 
         return all_metrics_dic
 
@@ -204,7 +235,9 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
     def get_dataset_y(dataset_name, cache_directory):
         if dataset_name == SingleCycleApplication.DATASET_NAMES[0]:
             # dataset_y = Shifrut2018TCells.load_data(cache_directory)
-            raise NotImplementedError("Shifrut et al is currently not available for automated evaluation.")
+            raise NotImplementedError(
+                "Shifrut et al is currently not available for automated evaluation."
+            )
         elif dataset_name == SingleCycleApplication.DATASET_NAMES[1]:
             dataset_y = Schmidt2021TCellsIFNg.load_data(cache_directory)
         elif dataset_name == SingleCycleApplication.DATASET_NAMES[2]:
@@ -234,13 +267,20 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
         return dataset_x
 
     def load_data(self) -> Dict[AnyStr, sp.AbstractDataSource]:
-        dataset_x = SingleCycleApplication.get_dataset_x(self.feature_set_name, self.cache_directory)
-        dataset_y = SingleCycleApplication.get_dataset_y(self.dataset_name, self.cache_directory)
+        dataset_x = SingleCycleApplication.get_dataset_x(
+            self.feature_set_name, self.cache_directory
+        )
+        dataset_y = SingleCycleApplication.get_dataset_y(
+            self.dataset_name, self.cache_directory
+        )
 
         # Subset dataset_y by the overlap of genes present in both dataset_x and dataset_y.
         avail_names = sorted(
-            list(set(dataset_x.get_row_names()).intersection(
-                set(dataset_y.get_row_names())))
+            list(
+                set(dataset_x.get_row_names()).intersection(
+                    set(dataset_y.get_row_names())
+                )
+            )
         )
         dataset_y = dataset_y.subset(avail_names)
         dataset_x = dataset_x.subset(avail_names)
@@ -251,7 +291,7 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
         training_indices, validation_indices = stratifier.split(
             dataset_y,
             test_set_fraction=1 - self.train_ratio,
-            split_index=self.split_index_inner
+            split_index=self.split_index_inner,
         )
         return {
             "training_set_x": dataset_x.subset(training_indices),
@@ -259,7 +299,7 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
             "validation_set_x": dataset_x.subset(validation_indices),
             "validation_set_y": dataset_y.subset(validation_indices),
             "test_set_x": dataset_x.subset(self.test_indices),
-            "test_set_y": dataset_y.subset(self.test_indices)
+            "test_set_y": dataset_y.subset(self.test_indices),
         }
 
     def get_model(self) -> sp.AbstractBaseModel:
@@ -271,36 +311,40 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
                 base_module=RandomForestRegressor(
                     n_estimators=self.model_hyperparams["rf_num_estimators"],
                     max_depth=rf_max_depth,
-                    random_state=self.seed)
+                    random_state=self.seed,
+                )
             )
         elif self.model_name == "bayesian_mlp":
             super_base_module = torch_model.TorchModel(
                 base_module=pytorch_models.BayesianMLP(
-                    input_size=SingleCycleApplication.get_dataset_x(self.feature_set_name,
-                                                                    self.cache_directory).get_shape()[0][-1],
-                    hidden_size=self.dn_hidden_layer_size),
+                    input_size=SingleCycleApplication.get_dataset_x(
+                        self.feature_set_name, self.cache_directory
+                    ).get_shape()[0][-1],
+                    hidden_size=self.dn_hidden_layer_size,
+                ),
                 loss=CustomLoss(),
                 batch_size=64,
-                num_epochs=100
+                num_epochs=100,
             )
             sp_model = meta_models.PytorchMLPRegressorWithUncertainty(
-                model=super_base_module,
-                num_target_samples=100
+                model=super_base_module, num_target_samples=100
             )
         elif self.model_name == "base_gp":
             sp_model = BotorchCompatibleGP(
-                dim_input=SingleCycleApplication.get_dataset_x(self.feature_set_name,
-                                                               self.cache_directory).get_shape()[0][-1],
-                device=torch.device("cpu")
+                dim_input=SingleCycleApplication.get_dataset_x(
+                    self.feature_set_name, self.cache_directory
+                ).get_shape()[0][-1],
+                device=torch.device("cpu"),
             )
         else:
             raise NotImplementedError(f"{self.model_name} does not exist.")
         self.model = sp_model
         return sp_model
 
-    def train_model(self, model: sp.AbstractBaseModel) -> Optional[sp.AbstractBaseModel]:
-        model.fit(self.datasets.training_set_x,
-                  self.datasets.training_set_y)
+    def train_model(
+        self, model: sp.AbstractBaseModel
+    ) -> Optional[sp.AbstractBaseModel]:
+        model.fit(self.datasets.training_set_x, self.datasets.training_set_y)
         self.model = model
         return model
 
@@ -326,7 +370,9 @@ class SingleCycleApplication(sp.AbstractBaseApplication):
             (represented as a Tuple) or continuous (represented as a List[start, end]) value range.
         """
         prefixes = {"randomforest": "rf_", "bayesian_mlp": "dn_"}
-        model_hyperopt_parameter_ranges = self.get_model().get_hyperopt_parameter_ranges()
+        model_hyperopt_parameter_ranges = (
+            self.get_model().get_hyperopt_parameter_ranges()
+        )
         model_hyperopt_parameter_ranges = update_dictionary_keys_with_prefixes(
             model_hyperopt_parameter_ranges, prefixes[self.model_name]
         )

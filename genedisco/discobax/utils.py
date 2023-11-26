@@ -70,10 +70,10 @@ class Timer(object):
         self.tstart = time.time()
 
     def __exit__(self, type, value, traceback):
-        message = 'Elapsed: %.2f seconds' % (time.time() - self.tstart)
+        message = "Elapsed: %.2f seconds" % (time.time() - self.tstart)
         if self.name:
-            message = '*[TIME] [%s] ' % self.name + message
+            message = "*[TIME] [%s] " % self.name + message
         print(message)
         if self.filename:
-            with open(self.filename, 'a') as file:
+            with open(self.filename, "a") as file:
                 print(str(datetime.datetime.now()) + ": ", message, file=file)

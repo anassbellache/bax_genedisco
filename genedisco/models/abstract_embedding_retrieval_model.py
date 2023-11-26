@@ -18,6 +18,7 @@ from abc import abstractmethod
 
 class EmbeddingRetrievalModel:
     """An abstract model allowing retrieval of embedding layer and its gradient"""
+
     def __init__(self):
         super(EmbeddingRetrievalModel, self).__init__()
 
@@ -28,4 +29,3 @@ class EmbeddingRetrievalModel:
     @abstractmethod
     def get_embedding(self, dataset):
         raise NotImplementedError()
-

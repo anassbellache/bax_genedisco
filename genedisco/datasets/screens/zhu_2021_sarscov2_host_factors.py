@@ -31,6 +31,7 @@ class Zhu2021SARSCoV2HostFactors(object):
 
     LICENSE: https://creativecommons.org/licenses/by/4.0/
     """
+
     @staticmethod
     def load_data(save_directory) -> AbstractDataSource:
         h5_file = os.path.join(save_directory, "zhu_2021_sarscov2_host_factors.h5")
@@ -39,14 +40,20 @@ class Zhu2021SARSCoV2HostFactors(object):
             csv_file_path = os.path.join(dir_path, "zhu_2021_sarscov2_host_factors.csv")
             df = pd.read_csv(csv_file_path, sep=",", index_col="id")
 
-            gene_names, data = df.index.values.tolist(), -np.log(df[['pos|score']].values.astype(np.float32))
+            gene_names, data = df.index.values.tolist(), -np.log(
+                df[["pos|score"]].values.astype(np.float32)
+            )
             gene_names, idx_start = np.unique(gene_names, return_index=True)
             data = data[idx_start]
 
-            HDF5Tools.save_h5_file(h5_file,
-                                   data,
-                                   "zhu_2021_sarscov2_host_factors",
-                                   column_names=["RSA"],
-                                   row_names=gene_names)
-        data_source = HDF5DataSource(h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy())
+            HDF5Tools.save_h5_file(
+                h5_file,
+                data,
+                "zhu_2021_sarscov2_host_factors",
+                column_names=["RSA"],
+                row_names=gene_names,
+            )
+        data_source = HDF5DataSource(
+            h5_file, duplicate_merge_strategy=sp.MeanMergeStrategy()
+        )
         return data_source
