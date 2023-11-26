@@ -140,6 +140,7 @@ class ActiveLearningLoop(sp.AbstractBaseApplication):
     def get_acquisition_function(
         acquisition_function_name: AnyStr, acquisition_function_path: AnyStr
     ) -> BaseBatchAcquisitionFunction:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if acquisition_function_name == "random":
             return RandomBatchAcquisitionFunction()
         elif acquisition_function_name == "topuncertain":
@@ -159,7 +160,7 @@ class ActiveLearningLoop(sp.AbstractBaseApplication):
         elif acquisition_function_name == "adversarialBIM":
             return AdversarialBIM()
         elif acquisition_function_name == "disco_bax":
-            return DiscoBAXAdditive()
+            return DiscoBAXAdditive(device=device)
         elif acquisition_function_name == "custom":
             acqfunc_class = ActiveLearningLoop.get_if_valid_acquisition_function_file(
                 acquisition_function_path
