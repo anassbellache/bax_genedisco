@@ -13,9 +13,9 @@ from .algorithm import SubsetSelect
 
 
 class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
-    def __init__(self, device, path_sample_num=10) -> None:
+    def __init__(self, path_sample_num=10) -> None:
         super(DiscoBAXAdditive, self).__init__()
-        self.device = device
+        self.device = torch.device("cpu")
         self.path_sample_num = path_sample_num
 
     def __call__(
@@ -32,7 +32,7 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
             dtype=torch.float32,
             device=self.device,
         ).squeeze(0)
-        self.model = last_model.to(self.device)
+        self.model = last_model
 
         self.algo = SubsetSelect(
             avail_dataset_x,
@@ -41,10 +41,8 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
             k=batch_size,
         )
         exe_paths = self.algo.get_exe_paths(self.model)
-        all_x = [
-            torch.tensor(namespace.x, device=self.device) for namespace in exe_paths
-        ]
-        self.xs_exe = torch.stack(all_x)
+        all_x = [namespace.x for namespace in exe_paths]
+        self.xs_exe = torch.stack(all_x).to(self.device)
 
         # Compute EIG using the current model
         p = self.model.posterior(X)
@@ -54,9 +52,11 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
 
         # Loop over each execution path
         for xs in tqdm(self.xs_exe, desc="Calculating EIG over paths"):
+            # Construct fantasy models using BoTorch's fantasize method
             sampler = SobolQMCNormalSampler(self.path_sample_num)
             fmodels_path = self.model.fantasize(xs, sampler)
 
+            # For fantasy models of this execution path
             pfs = fmodels_path.posterior(X)
             h_fantasies = 0.5 * torch.log(2 * torch.pi * pfs.variance) + 0.5
             avg_h_fantasy = torch.mean(h_fantasies, dim=0)

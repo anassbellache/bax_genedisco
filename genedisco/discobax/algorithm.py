@@ -174,7 +174,9 @@ class SubsetSelect(Algorithm):
     def monte_carlo_expectation(
         self, candidates: torch.Tensor, S: List[torch.Tensor], f: BotorchCompatibleGP
     ):
+        # Ensure candidates are on the correct device
         candidates = candidates.to(self.device)
+
         S_tensor = torch.stack(S).to(self.device)
 
         # Parallel computation of expected maxima
@@ -230,7 +232,7 @@ class SubsetSelect(Algorithm):
 
         if len(self.selected_subset) < self.k:
             self.selected_subset.append(next_x)
-            y_pred = f.predict(next_x.unsqueeze(0))
+            y_pred = f.predict(next_x)
             y = y_pred[0] if isinstance(y_pred, list) else y_pred
             self.update_exe_paths(next_x, y)
 

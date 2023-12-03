@@ -9,13 +9,12 @@
 #  Update posterior with new data
 #  Scales up to large datasets
 #  Handles batches
-from typing import Any
+from typing import Any, Optional
 from typing import (
     AnyStr,
     Type,
     List,
 )
-from typing import Optional
 
 import botorch
 import gpytorch
@@ -26,93 +25,66 @@ from botorch.models.model import Model
 from botorch.posteriors import Posterior, GPyTorchPosterior
 from gpytorch.distributions import MultivariateNormal
 from gpytorch.likelihoods import GaussianLikelihood
-from gpytorch.models import ApproximateGP
-from gpytorch.variational import CholeskyVariationalDistribution
-from gpytorch.variational import VariationalStrategy
+from gpytorch.models import ApproximateGP, ExactGP
 from slingpy import AbstractBaseModel, AbstractDataSource
 from torch import Tensor
 from torch.nn import Module
 
 
-class SparseGPModel(ApproximateGP):
-    def __init__(self, likelihood, dim_input, device, num_inducing_points=10):
-        # Initialize inducing points on the specified device
-        inducing_points = torch.randn(num_inducing_points, dim_input, device=device)
+class SparseGPModel(ExactGP):
+    def __init__(self, train_x, train_y, likelihood, device):
+        super(SparseGPModel, self).__init__(train_x, train_y, likelihood)
 
-        # Setup the variational distribution and ensure it's on the same device
-        variational_distribution = CholeskyVariationalDistribution(
-            inducing_points.size(0)
-        ).to(device)
-
-        # Initialize the variational strategy on the specified device
-        variational_strategy = VariationalStrategy(
-            self,
-            inducing_points,
-            variational_distribution,
-            learn_inducing_locations=True,
-        )
-
-        # Call superclass's __init__ method with the necessary arguments
-        super(SparseGPModel, self).__init__(variational_strategy=variational_strategy)
-
-        # Define mean and covariance functions and ensure they're on the same device
-        self.mean_module = gpytorch.means.ZeroMean().to(device)
-        self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel()
-        ).to(device)
-
-        # Store the likelihood and ensure it's on the same device
-        self.likelihood = likelihood.to(device)
-
-        # Store device for further use
+        # Move to the specified device
         self.device = device
+        self.to(device)
+
+        # Define mean and covariance functions
+        self.mean_module = gpytorch.means.ZeroMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
 
     def forward(self, x):
-        # Ensure input x is on the correct device
+        # Ensure input tensor is on the correct device
         x = x.to(self.device)
 
-        # Return the predictive mean and variance for the given inputs x
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return MultivariateNormal(mean_x, covar_x)
 
-    def posterior(
-        self, X: Tensor, *args, observation_noise: bool = False, **kwargs: Any
-    ) -> GPyTorchPosterior:
-        # Ensure input X is on the correct device
+    def condition_on_observations(
+        self, X: torch.Tensor, Y: torch.Tensor, **kwargs
+    ) -> "NeuralGPModel":
+        """
+        Condition the model on new observations (X, Y) and return a new GP model.
+        """
+
         X = X.to(self.device)
-
-        # Get the predictive distribution (prior) for X
-        predictive_distribution = self.forward(X)
-
-        # Get the approximate posterior using the variational strategy
-        posterior_distribution = self.variational_strategy(X, predictive_distribution)
-
-        # If observation_noise flag is set, add the likelihood noise to the posterior
-        if observation_noise:
-            posterior_distribution = self.likelihood(
-                posterior_distribution, *args, **kwargs
-            )
-
-        # Return the posterior as a Botorch GPyTorchPosterior object
-        return GPyTorchPosterior(posterior_distribution)
-
-    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any):
-        """
-        Condition the model on new observations and return a new model instance.
-        """
-        # Ensure inputs X and Y are on the correct device
-        X, Y = X.to(self.device), Y.to(self.device)
-
-        # Condition the model on new observations
+        Y = Y.to(self.device)
+        # Create a fantasy model that includes the new observations
         fantasy_model = self.get_fantasy_model(X, Y, **kwargs)
+
         return fantasy_model
+
+    def posterior(
+        self, X: torch.Tensor, observation_noise: bool = False, **kwargs
+    ) -> gpytorch.distributions.MultivariateNormal:
+        """
+        Returns the posterior distribution at given inputs X.
+        """
+        X = X.to(self.device)
+        # Get the predictive distribution for X
+        predictive_distribution = self(X)
+
+        if observation_noise:
+            # Add observation noise to the predictive distribution if required
+            predictive_distribution = self.likelihood(predictive_distribution)
+
+        return predictive_distribution
 
 
 class LargeFeatureExtractor(torch.nn.Module):
-    def __init__(self, data_dim, feature_dim, device):
+    def __init__(self, data_dim, feature_dim):
         super(LargeFeatureExtractor, self).__init__()
-        self.device = device
         self.layers = torch.nn.Sequential(
             torch.nn.Linear(data_dim, 1000),
             torch.nn.ReLU(),
@@ -121,258 +93,155 @@ class LargeFeatureExtractor(torch.nn.Module):
             torch.nn.Linear(500, 50),
             torch.nn.ReLU(),
             torch.nn.Linear(50, feature_dim),
-        ).to(self.device)
+        )
 
     def forward(self, x):
-        # Ensure input tensor is on the correct device
-        x = x.to(self.device)
         # Pass through the layers
         x = self.layers(x)
         return x
 
 
-class GPLayer(ApproximateGP):
-    def __init__(self, num_dim, device):
+class NeuralGPModel(ExactGP, botorch.models.model.FantasizeMixin):
+    def __init__(self, train_x, train_y, likelihood, device, feature_selection=100):
+        super(NeuralGPModel, self).__init__(train_x, train_y, likelihood)
+
+        # Move to the specified device
         self.device = device
-        variational_distribution = CholeskyVariationalDistribution(
-            num_inducing_points=10
-        ).to(self.device)
-        inducing_points = torch.zeros(10, num_dim, device=self.device)
-        variational_strategy = VariationalStrategy(
-            self,
-            inducing_points,
-            variational_distribution,
-            learn_inducing_locations=True,
-        )
-        super(GPLayer, self).__init__(variational_strategy)
-        self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel()
-        ).to(self.device)
-        self.mean_module = gpytorch.means.ConstantMean().to(self.device)
+        self.to(device)
 
-    def forward(self, x):
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-
-class DKLModel(gpytorch.Module):
-    def __init__(self, feature_extractor, num_dim, device):
-        super(DKLModel, self).__init__()
-        self.device = device
-        self.feature_extractor = feature_extractor.to(self.device)
-        self.gp_layer = GPLayer(num_dim, self.device)
-        self.likelihood = GaussianLikelihood().to(self.device)
-        self.num_dim = num_dim
-
-        self.scale_to_bounds = gpytorch.utils.grid.ScaleToBounds(
-            self.grid_bounds[0], self.grid_bounds[1]
-        )
-
-    def forward(self, x):
-        features = self.feature_extractor(x)
-        # Assume scale_to_bounds is a method that scales features to the bounds required for the GP
-        features = self.scale_to_bounds(features)
-        # This next line makes it so that we learn a GP for each feature
-        features = features.transpose(-1, -2).unsqueeze(-1)
-        res = self.gp_layer(features)
-        return res
-
-    def condition_on_observations(
-        self, X: torch.Tensor, Y: torch.Tensor, **kwargs: Any
-    ):
-        """
-        Condition the model on new observations and return a new model instance.
-        """
-        # Create a new DKLModel instance with the same parameters as the current model
-        conditioned_model = self.__class__(
-            feature_extractor=self.feature_extractor,
-            num_dim=self.num_dim,
-            device=self.device,
-        ).to(self.device)
-
-        # Copy over the state dict (parameters) from the current model to the new model
-        conditioned_model.load_state_dict(self.state_dict())
-
-        # Use the get_fantasy_model method from the GaussianProcessLayer to condition the GP layer
-        conditioned_model.gp_layer = self.gp_layer.get_fantasy_model(X, Y, **kwargs)
-
-        return conditioned_model
-
-
-class NeuralGPModel(ApproximateGP, botorch.models.model.FantasizeMixin):
-    def __init__(
-        self,
-        likelihood,
-        dim_input,
-        device,
-        feature_selection=100,
-        num_inducing_points=10,
-    ):
-        # Initialize inducing points
-        inducing_points = torch.randn(num_inducing_points, dim_input).to(device)
-
-        # Setup the variational distribution
-        variational_distribution = CholeskyVariationalDistribution(
-            inducing_points.size(0)
-        ).to(device)
-
-        # Initialize the variational strategy
-        variational_strategy = VariationalStrategy(
-            self,
-            inducing_points,
-            variational_distribution,
-            learn_inducing_locations=True,
-        )
-
-        # Call superclass's __init__ method with the necessary arguments
-        super(NeuralGPModel, self).__init__(variational_strategy=variational_strategy)
         # Define mean and covariance functions
-        self.mean_module = gpytorch.means.ZeroMean().to(device)
-        self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel()
-        ).to(device)
-        self.likelihood = likelihood
-
-        # Store device for further use
-        self.device = device
+        self.mean_module = gpytorch.means.ZeroMean()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
 
         # Neural network feature extractor
-        self.feature_extractor = LargeFeatureExtractor(dim_input, feature_selection).to(
-            device
-        )
+        self.feature_extractor = LargeFeatureExtractor(
+            train_x.size(-1), feature_selection
+        ).to(device)
+
+    def forward(self, x):
+        # Transform input using the feature extractor
+        projected_x = self.feature_extractor(x)
+
+        # Compute mean and covariance using the transformed input
+        mean_x = self.mean_module(projected_x)
+        covar_x = self.covar_module(projected_x)
+        return MultivariateNormal(mean_x, covar_x)
 
     def update_train_data(self, new_x: Tensor, new_y: Tensor) -> None:
-        """
-        Update the model's training data with new observations.
+        # Project new inputs using the feature extractor
+        new_x = new_x.to(self.device)
+        new_y = new_y.to(self.device)
+        new_x_projected = self.feature_extractor(new_x).to(self.device)
 
-        Args:
-            new_x: New training inputs.
-            new_y: New training targets.
-        """
-        new_x_projected = self.feature_extractor(new_x)
-
+        # Update the training data
         if self.train_inputs[0] is None:
-            updated_train_x = new_x_projected.to(self.device)
-            updated_train_y = new_y.to(self.device)
+            updated_train_x = new_x_projected
+            updated_train_y = new_y
         else:
-            train_inputs_projected = self.feature_extractor(self.train_inputs[0]).to(
-                self.device
-            )
-
             # Concatenate old and new data
-            if train_inputs_projected.dim() == 1:
-                updated_train_x = torch.cat(
-                    [train_inputs_projected, new_x_projected.squeeze(0)], dim=0
-                ).to(self.device)
-            else:
-                updated_train_x = torch.cat(
-                    [train_inputs_projected, new_x_projected], dim=0
-                ).to(self.device)
-
-            updated_train_y = torch.cat([self.train_targets, new_y], dim=0).to(
-                self.device
-            )
+            updated_train_x = torch.cat([self.train_inputs[0], new_x_projected], dim=0)
+            updated_train_y = torch.cat([self.train_targets, new_y], dim=0)
 
         self.set_train_data(updated_train_x, updated_train_y, strict=False)
 
-    def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any):
+    def condition_on_observations(
+        self, X: torch.Tensor, Y: torch.Tensor, **kwargs
+    ) -> "NeuralGPModel":
         """
-        Condition the NeuralGP on new observations (X, Y) and return a new NeuralGPModel.
+        Condition the model on new observations (X, Y) and return a new GP model.
         """
-        # Update train data
-        self.update_train_data(X, Y)
+        X = X.to(self.device)
+        Y = Y.to(self.device)
+        # Create a fantasy model that includes the new observations
+        fantasy_model = self.get_fantasy_model(X, Y, **kwargs)
 
-        # Create a new model instance with updated training data
-        new_model = self.__class__(self.data_dim, self.likelihood, self.device)
-
-        # Copy model components
-        new_model.likelihood = self.likelihood
-        new_model.mean_module = self.mean_module
-        new_model.covar_module = self.covar_module
-        new_model.feature_extractor = self.feature_extractor
-
-        # Set the training data of the new model
-        new_model.set_train_data(self.train_inputs[0], self.train_targets)
-
-        return new_model
+        return fantasy_model
 
     def posterior(
-        self, X: Tensor, observation_noise: bool = False, **kwargs: Any
-    ) -> Posterior:
-        # Process the input through the neural network.
-        # Obtain the prior distribution.
-        mvn = self(X)
+        self, X: torch.Tensor, observation_noise: bool = False, **kwargs
+    ) -> gpytorch.distributions.MultivariateNormal:
+        """
+        Returns the posterior distribution at given inputs X.
+        """
+        # Get the predictive distribution for X
+        X = X.to(self.device)
+        predictive_distribution = self(X)
 
-        # If observation noise should be added and the likelihood is GaussianLikelihood
-        if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
-            noise = self.likelihood.noise
-            mvn = MultivariateNormal(
-                mvn.mean, mvn.lazy_covariance_matrix.add_diag(noise)
-            )
+        if observation_noise:
+            # Add observation noise to the predictive distribution if required
+            predictive_distribution = self.likelihood(predictive_distribution)
 
-        # Return the botorch wrapper around GPyTorch's posterior.
-        return GPyTorchPosterior(mvn)
+        return predictive_distribution
 
     def transform_inputs(
         self, X: Tensor, input_transform: Optional[Module] = None
     ) -> Tensor:
         pass
 
-    def forward(self, x):
-        # Return the predictive mean and variance for the given inputs x
-        mean_x = self.mean_module(x)
-        covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
     def __call__(self, x, **kwargs):
+        x = x.to(self.device)
         return self.forward(x)
 
 
-class SumGPModel(ApproximateGP):
-    def __init__(self, neural_gp: DKLModel, noise_gp: SparseGPModel):
-        super().__init__(neural_gp.variational_strategy)
+class SumGPModel(ExactGP):
+    def __init__(
+        self, neural_gp: NeuralGPModel, noise_gp: SparseGPModel, train_x, train_y
+    ):
+        super(SumGPModel, self).__init__(train_x, train_y, likelihood=None)
 
         self.neural_gp = neural_gp
         self.noise_gp = noise_gp
 
-        # Extracting the likelihoods directly from the GPs
-        self.neural_likelihood = neural_gp.likelihood
-        self.noise_likelihood = noise_gp.likelihood
-
-        # Ensure both GPs are on the same device
-        self.device = neural_gp.device
-        self.neural_gp.to(self.device)
-        self.noise_gp.to(self.device)
-
     def forward(self, x):
-        # Ensure input tensor is on the correct device
         x = x.to(self.device)
+        # Get outputs from both models
+        neural_out = self.neural_gp(x)
+        noise_out = self.noise_gp(x)
 
-        neural_out = self.neural_likelihood(self.neural_gp(x))
-        noise_out = self.noise_likelihood(self.noise_gp(x))
-
+        # Sum the means and covariances
         mean_x = neural_out.mean + noise_out.mean
         covar_x = neural_out.lazy_covariance_matrix + noise_out.lazy_covariance_matrix
 
         return MultivariateNormal(mean_x, covar_x)
 
     def condition_on_observations(self, X: Tensor, Y: Tensor, **kwargs: Any):
-        # Ensure inputs X and Y are on the correct device
-        X, Y = X.to(self.device), Y.to(self.device)
+        """
+        Condition the model on new observations and return a new model instance.
+        This method might need more sophisticated handling depending on the
+        underlying models' capabilities to be conditioned on new data.
+        """
+        # Update training data for both models
+        self.neural_gp.set_train_data(X, Y, strict=False)
+        self.noise_gp.set_train_data(X, Y, strict=False)
 
-        # Condition both GPs on the new observations
-        conditioned_neural_gp = self.neural_gp.gp_layer.get_fantasy_model(
-            X, Y, **kwargs
-        )
-        conditioned_noise_gp = self.noise_gp.get_fantasy_model(X, Y, **kwargs)
+        # Create a new SumGPModel instance with updated models
+        conditioned_model = self.__class__(self.neural_gp, self.noise_gp, X, Y)
 
-        # Create a new SumGPModel instance with the conditioned GPs
-        conditioned_model = self.__class__(conditioned_neural_gp, conditioned_noise_gp)
-        conditioned_model.to(self.device)
-
-        # Return the new conditioned model
         return conditioned_model
+
+    def posterior(
+        self, X: Tensor, observation_noise: bool = False, **kwargs: Any
+    ) -> gpytorch.distributions.MultivariateNormal:
+        """
+        Returns the posterior distribution of the summed GP model at given inputs X.
+        """
+        # Ensure the input is on the correct device
+        X = X.to(self.device)
+
+        # Get predictive distributions from both models
+        neural_pred = self.neural_gp(X)
+        noise_pred = self.noise_gp(X)
+
+        if observation_noise:
+            # Add observation noise from the likelihoods of each model
+            neural_pred = self.neural_likelihood(neural_pred)
+            noise_pred = self.noise_likelihood(noise_pred)
+
+        # Sum the means and covariances
+        mean_x = neural_pred.mean + noise_pred.mean
+        covar_x = neural_pred.lazy_covariance_matrix + noise_pred.lazy_covariance_matrix
+
+        return MultivariateNormal(mean_x, covar_x)
 
 
 class BotorchCompatibleGP(
@@ -386,15 +255,13 @@ class BotorchCompatibleGP(
         self.batch_size = batch_size
 
         self.likelihood = GaussianLikelihood().to(device)
-        self.noise_likelihood = GaussianLikelihood().to(device)
 
-        self.noise_gp = (
-            SparseGPModel(self.noise_likelihood, dim_input, device).to(device).float()
-        )
-        self.neural_gp = DKLModel(self.likelihood, dim_input, device).to(device).float()
-        self.sum_gp = SumGPModel(self.neural_gp, self.noise_gp).to(device)
-
-        self.sum_likelihood = GaussianLikelihood().to(device)
+        # Initialize the GP models
+        self.noise_gp = SparseGPModel(None, None, self.likelihood, device)
+        self.neural_gp = NeuralGPModel(self.likelihood, dim_input, device)
+        self.sum_gp = SumGPModel(
+            self.neural_gp, self.noise_gp, None, None
+        )  # No separate training data
 
         # Initialization
         self.train_x = None
@@ -402,8 +269,7 @@ class BotorchCompatibleGP(
         self.return_samples = False
 
     def forward(self, x):
-        x = x.to(self.device)
-        return self.sum_gp(x)
+        return self.sum_gp(x.to(self.device))
 
     def fit(
         self,
@@ -426,9 +292,7 @@ class BotorchCompatibleGP(
         self.num_samples = train_y.size(0)
 
         self.sum_gp.train()
-        mll_sum = gpytorch.mlls.VariationalELBO(
-            self.sum_likelihood, self.sum_gp, self.num_samples
-        )
+        mll_sum = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.sum_gp)
         optimizer_sum = torch.optim.Adam(self.sum_gp.parameters(), lr=0.01)
 
         for i in range(50):
@@ -489,7 +353,6 @@ class BotorchCompatibleGP(
     def condition_on_observations(
         self, X: Tensor, Y: Tensor, **kwargs: Any
     ) -> "BotorchCompatibleGP":
-        X, Y = X.to(self.device), Y.to(self.device)
         if self.train_x is not None and self.train_y is not None:
             X = torch.cat([self.train_x, X], dim=0)
             Y = torch.cat([self.train_y, Y], dim=0)
@@ -502,7 +365,6 @@ class BotorchCompatibleGP(
     def posterior(
         self, X: Tensor, observation_noise: bool = False, **kwargs: Any
     ) -> Posterior:
-        X = X.to(self.device)
         mvn = self.sum_gp(X)
         if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
             mvn = MultivariateNormal(
@@ -553,7 +415,7 @@ class BotorchCompatibleGP(
         Parameters:
             - file_path (str): The path to where the model should be saved.
         """
-        print("savig model: ")
+        print("saving model: ")
         state_dict = {
             "data_dim": self.data_dim,
             "neural_gp": self.neural_gp.state_dict(),
