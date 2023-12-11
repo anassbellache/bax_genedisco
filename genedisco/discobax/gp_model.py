@@ -12,7 +12,6 @@
 from typing import Any, Optional
 from typing import (
     AnyStr,
-    Type,
     List,
 )
 
@@ -25,7 +24,7 @@ from botorch.models.model import Model
 from botorch.posteriors import Posterior, GPyTorchPosterior
 from gpytorch.distributions import MultivariateNormal
 from gpytorch.likelihoods import GaussianLikelihood
-from gpytorch.models import ApproximateGP, ExactGP
+from gpytorch.models import ExactGP
 from slingpy import AbstractBaseModel, AbstractDataSource
 from torch import Tensor
 from torch.nn import Module
@@ -37,7 +36,6 @@ class SparseGPModel(ExactGP):
 
         # Move to the specified device
         self.device = device
-        self.to(device)
 
         # Define mean and covariance functions
         self.mean_module = gpytorch.means.ZeroMean()
@@ -102,21 +100,22 @@ class LargeFeatureExtractor(torch.nn.Module):
 
 
 class NeuralGPModel(ExactGP, botorch.models.model.FantasizeMixin):
-    def __init__(self, train_x, train_y, likelihood, device, feature_selection=100):
+    def __init__(
+        self, train_x, train_y, likelihood, dim_input, device, feature_selection=100
+    ):
         super(NeuralGPModel, self).__init__(train_x, train_y, likelihood)
 
         # Move to the specified device
         self.device = device
-        self.to(device)
 
         # Define mean and covariance functions
         self.mean_module = gpytorch.means.ZeroMean()
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
 
         # Neural network feature extractor
-        self.feature_extractor = LargeFeatureExtractor(
-            train_x.size(-1), feature_selection
-        ).to(device)
+        self.feature_extractor = LargeFeatureExtractor(dim_input, feature_selection).to(
+            device
+        )
 
     def forward(self, x):
         # Transform input using the feature extractor
@@ -185,12 +184,23 @@ class NeuralGPModel(ExactGP, botorch.models.model.FantasizeMixin):
 
 class SumGPModel(ExactGP):
     def __init__(
-        self, neural_gp: NeuralGPModel, noise_gp: SparseGPModel, train_x, train_y
+        self,
+        neural_gp: NeuralGPModel,
+        noise_gp: SparseGPModel,
+        train_x,
+        train_y,
+        device,
     ):
-        super(SumGPModel, self).__init__(train_x, train_y, likelihood=None)
+        likelihood = (
+            neural_gp.likelihood
+            if neural_gp.likelihood == noise_gp.likelihood
+            else GaussianLikelihood()
+        )
+        super(SumGPModel, self).__init__(train_x, train_y, likelihood)
 
         self.neural_gp = neural_gp
         self.noise_gp = noise_gp
+        self.device = device
 
     def forward(self, x):
         x = x.to(self.device)
@@ -258,9 +268,9 @@ class BotorchCompatibleGP(
 
         # Initialize the GP models
         self.noise_gp = SparseGPModel(None, None, self.likelihood, device)
-        self.neural_gp = NeuralGPModel(self.likelihood, dim_input, device)
+        self.neural_gp = NeuralGPModel(None, None, self.likelihood, dim_input, device)
         self.sum_gp = SumGPModel(
-            self.neural_gp, self.noise_gp, None, None
+            self.neural_gp, self.noise_gp, None, None, device
         )  # No separate training data
 
         # Initialization
@@ -282,27 +292,43 @@ class BotorchCompatibleGP(
             raise ValueError("Both train_x and train_y must be provided")
 
         # Convert data to tensors
-        train_x = torch.tensor(
+        train_x_tensor = torch.tensor(
             np.array(train_x.get_data()), dtype=torch.float32, device=self.device
         ).squeeze(0)
-        train_y = torch.tensor(
+        train_y_tensor = torch.tensor(
             np.array(train_y.get_data()), dtype=torch.float32, device=self.device
         ).squeeze(0)
+        train_y_tensor = train_y_tensor.squeeze(1)
 
-        self.num_samples = train_y.size(0)
+        # Set training data for each model
+        self.neural_gp.set_train_data(train_x_tensor, train_y_tensor, strict=False)
+        self.noise_gp.set_train_data(train_x_tensor, train_y_tensor, strict=False)
+        self.sum_gp.set_train_data(train_x_tensor, train_y_tensor, strict=False)
 
+        # Ensure models are on the same device
+        self.neural_gp = self.neural_gp.to(self.device)
+        self.noise_gp = self.noise_gp.to(self.device)
+        self.sum_gp = self.sum_gp.to(self.device)
+
+        self.num_samples = train_y_tensor.size(0)
+
+        # Set the training data for SumGPModel
+        self.sum_gp.set_train_data(train_x_tensor, train_y_tensor, strict=False)
+
+        # Training loop
         self.sum_gp.train()
         mll_sum = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.sum_gp)
         optimizer_sum = torch.optim.Adam(self.sum_gp.parameters(), lr=0.01)
 
         for i in range(50):
-            for j in range(train_x.shape[0]):
-                optimizer_sum.zero_grad()
-                output_sum = self.sum_gp(train_x[j])
-                loss_sum = -mll_sum(output_sum, train_y[j]).sum()
-                loss_sum.backward(retain_graph=True)
-                optimizer_sum.step()
-            print(f"Epoch {i}, Loss: {loss_sum}")
+            optimizer_sum.zero_grad()
+            output_sum = self.sum_gp(train_x_tensor)
+            loss_sum = -mll_sum(output_sum, train_y_tensor).sum()
+            loss_sum.backward()
+            optimizer_sum.step()
+            print(
+                f"Epoch {i}, Loss: {loss_sum.item()}"
+            )  # Use .item() to print the loss value
 
         return self
 
@@ -313,9 +339,20 @@ class BotorchCompatibleGP(
         row_names: List[AnyStr] = None,
         return_samples=True,
     ) -> List[np.ndarray]:
-        x_tensor = torch.tensor(
-            np.array(dataset_x.get_data()), dtype=torch.float32, device=self.device
-        )
+        if isinstance(dataset_x, torch.Tensor):
+            x_tensor = dataset_x
+        else:
+            # If not, assume it's a data source with a get_data() method
+            try:
+                x_tensor = torch.tensor(
+                    np.array(dataset_x.get_data()),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+            except AttributeError:
+                raise TypeError(
+                    "dataset_x must be a tensor or have a get_data() method"
+                )
 
         self.return_samples = return_samples
 
@@ -348,7 +385,20 @@ class BotorchCompatibleGP(
             y_margins = upper_bound - lower_bound
             return [pred_mean, pred_std, y_margins]
         else:
-            return np.concatenate(all_samples, axis=0)
+            # Concatenate all sample arrays
+            concatenated_samples = np.concatenate(all_samples, axis=0)
+
+            # Check if the array is already 2D, if not, reshape it
+            if concatenated_samples.ndim == 1:
+                concatenated_samples = concatenated_samples.reshape(
+                    -1, 1
+                )  # Reshape to 2D if necessary
+
+            # Add an extra dimension if needed
+            if concatenated_samples.ndim == 2:
+                # Add an extra dimension to match the expected shape
+                concatenated_samples = np.expand_dims(concatenated_samples, axis=-1)
+            return concatenated_samples
 
     def condition_on_observations(
         self, X: Tensor, Y: Tensor, **kwargs: Any
@@ -365,6 +415,7 @@ class BotorchCompatibleGP(
     def posterior(
         self, X: Tensor, observation_noise: bool = False, **kwargs: Any
     ) -> Posterior:
+        self.sum_gp.eval()
         mvn = self.sum_gp(X)
         if observation_noise and isinstance(self.likelihood, GaussianLikelihood):
             mvn = MultivariateNormal(
@@ -372,55 +423,60 @@ class BotorchCompatibleGP(
             )
         return GPyTorchPosterior(mvn)
 
+    @staticmethod
+    def get_save_file_extension() -> str:
+        """
+        Return the file extension for saving the model.
+
+        Returns:
+            str: The file extension.
+        """
+        return "pt"
+
     @classmethod
-    def load(
-        cls: Type["BotorchCompatibleGP"], file_path: AnyStr
-    ) -> "BotorchCompatibleGP":
+    def load(cls, file_path: str) -> "BotorchCompatibleGP":
         """
         Load the model from the specified file path.
 
         Parameters:
-            - file_path (str): The path from where the model should be loaded.
+            file_path (str): The path from where the model should be loaded.
 
         Returns:
-            - model (BotorchCompatibleGP): The loaded model.
+            BotorchCompatibleGP: The loaded model.
         """
-        print("loading model: ")
-        # Load the saved state dictionary
-        state_dict = torch.load(file_path)
+        print("Loading model...")
+        state_dict = torch.load(
+            file_path,
+            map_location=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        )
+        device = state_dict["device"]
 
-        # Extract data_dim from the saved state
-        data_dim = state_dict["data_dim"]
-        device = torch.device("cpu")
-
-        # Create a new model instance with the extracted data_dim
-        model = cls(data_dim, device)
+        # Create a new model instance
+        model = cls(
+            state_dict["data_dim"], state_dict["device"], state_dict["batch_size"]
+        )
 
         # Restore the state of the models and the likelihoods
         model.neural_gp.load_state_dict(state_dict["neural_gp"])
-        model.likelihood.load_state_dict(state_dict["likelihood"])
         model.noise_gp.load_state_dict(state_dict["noise_gp"])
-        model.noise_likelihood.load_state_dict(state_dict["noise_likelihood"])
-
+        model.likelihood.load_state_dict(state_dict["likelihood"])
+        model.sum_gp = SumGPModel(model.neural_gp, model.noise_gp, None, None, device)
         return model
 
-    @staticmethod
-    def get_save_file_extension() -> AnyStr:
-        return "pt"
-
-    def save(self, file_path: AnyStr):
+    def save(self, file_path: str):
         """
         Save the model to the specified file path.
 
         Parameters:
-            - file_path (str): The path to where the model should be saved.
+            file_path (str): The path to where the model should be saved.
         """
-        print("saving model: ")
+        print("Saving model...")
         state_dict = {
             "data_dim": self.data_dim,
+            "device": self.device.type,  # Save the device type (cpu or cuda)
+            "batch_size": self.batch_size,
             "neural_gp": self.neural_gp.state_dict(),
-            "likelihood": self.likelihood.state_dict(),
             "noise_gp": self.noise_gp.state_dict(),
-            "noise_likelihood": self.noise_likelihood.state_dict(),
+            "likelihood": self.likelihood.state_dict(),
         }
         torch.save(state_dict, file_path)

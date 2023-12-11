@@ -13,9 +13,9 @@ from .algorithm import SubsetSelect
 
 
 class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
-    def __init__(self, path_sample_num=10) -> None:
+    def __init__(self, device, path_sample_num=5) -> None:
         super(DiscoBAXAdditive, self).__init__()
-        self.device = torch.device("cpu")
+        self.device = device
         self.path_sample_num = path_sample_num
 
     def __call__(
