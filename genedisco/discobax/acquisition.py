@@ -13,10 +13,26 @@ from .algorithm import SubsetSelect
 
 
 class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
-    def __init__(self, device, path_sample_num=5) -> None:
+    def __init__(self, device, path_sample_num=5, n_components=None) -> None:
         super(DiscoBAXAdditive, self).__init__()
         self.device = device
         self.path_sample_num = path_sample_num
+        self.n_components = n_components
+
+    def perform_pca(self, X, n_components):
+        # Centering the data
+        X_mean = torch.mean(X, dim=0)
+        X_centered = X - X_mean
+
+        # SVD
+        U, S, V = torch.svd(X_centered)
+
+        # Select the principal components
+        components = V[:, :n_components]
+
+        # Project the data onto principal components
+        X_pca = torch.mm(X_centered, components)
+        return X_pca
 
     def __call__(
         self,
@@ -32,7 +48,11 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
             dtype=torch.float32,
             device=self.device,
         ).squeeze(0)
+
         self.model = last_model
+        # Perform PCA if n_components is specified
+        if self.n_components is not None:
+            X = self.perform_pca(X, self.n_components)
 
         self.algo = SubsetSelect(
             avail_dataset_x,
