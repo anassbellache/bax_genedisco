@@ -19,21 +19,6 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.path_sample_num = path_sample_num
         self.n_components = n_components
 
-    def perform_pca(self, X, n_components):
-        # Centering the data
-        X_mean = torch.mean(X, dim=0)
-        X_centered = X - X_mean
-
-        # SVD
-        U, S, V = torch.svd(X_centered)
-
-        # Select the principal components
-        components = V[:, :n_components]
-
-        # Project the data onto principal components
-        X_pca = torch.mm(X_centered, components)
-        return X_pca
-
     def __call__(
         self,
         dataset_x: AbstractDataSource,
@@ -50,9 +35,6 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         ).squeeze(0)
 
         self.model = last_model
-        # Perform PCA if n_components is specified
-        if self.n_components is not None:
-            X = self.perform_pca(X, self.n_components)
 
         self.algo = SubsetSelect(
             avail_dataset_x,

@@ -97,7 +97,7 @@ class TopK(FixedPathAlgorithm):
         return (
             np.argsort(self.exe_path.y)[: self.params.k]
             if self.params.opt_mode == "min"
-            else np.argsort(self.exe_path.y)[-self.params.k :]
+            else np.argsort(self.exe_path.y)[-self.params.k:]
         )
 
     def get_exe_path_crop(self):
@@ -130,22 +130,42 @@ class TopK(FixedPathAlgorithm):
     def output_dist_fn_jaccard(a, b):
         return 1 - jaccard_similarity(a.x, b.x)
 
+def perform_pca(X, n_components):
+    # Centering the data
+    X_mean = torch.mean(X, dim=0)
+    X_centered = X - X_mean
 
-def compute_expected_max(candidates, S_tensor, f, mc_samples, device, mc_sampler=None):
+    # SVD
+    U, S, V = torch.svd(X_centered)
+
+    # Select the principal components
+    components = V[:, :n_components]
+
+    # Project the data onto principal components
+    X_pca = torch.mm(X_centered, components)
+    return X_pca
+
+
+def compute_expected_max(candidates, S_tensor, f, mc_samples, device, n_components=None, mc_sampler=None):
     # Handling a potentially 3-dimensional S_tensor
     if S_tensor.dim() == 3:
         S_tensor = S_tensor.squeeze(0)
     assert (
-        S_tensor.dim() == 2
+            S_tensor.dim() == 2
     ), f"Expected S_tensor of dim 2, got {S_tensor.dim()} with shape {S_tensor.shape}"
 
     assert (
-        candidates.dim() == 3
+            candidates.dim() == 3
     ), f"Expected candidates of dim 3, got {candidates.dim()} with shape {candidates.shape}"
 
     # Expand S_tensor to match the batch size of candidates
     S_tensor = S_tensor.unsqueeze(0).expand(candidates.size(0), -1, -1)
     combined = torch.cat([S_tensor, candidates], dim=1).to(device)
+
+    # Perform PCA if n_components is specified
+    if n_components is not None:
+        # Perform PCA on combined tensor
+        combined = perform_pca(combined, n_components)
 
     if mc_sampler is None:
         mc_sampler = SobolQMCNormalSampler(sample_shape=torch.Size([mc_samples]))
@@ -177,14 +197,14 @@ class SubsetSelect(Algorithm):
         self.selected_subset = []
 
     def monte_carlo_expectation(
-        self, candidates: torch.Tensor, S: List[torch.Tensor], f: BotorchCompatibleGP
+            self, candidates: torch.Tensor, S: List[torch.Tensor], f: BotorchCompatibleGP
     ):
         candidates = candidates.to(self.device)
         S_tensor = torch.stack(S).to(self.device)
 
         # Compute expected maxima for all candidates in parallel
         expected_maxima = compute_expected_max(
-            candidates, S_tensor, f, self.mc_samples, self.device
+            candidates, S_tensor, f, self.mc_samples, self.device, n_components=100
         )
 
         return expected_maxima
