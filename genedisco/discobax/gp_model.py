@@ -257,18 +257,23 @@ class SumGPModel(ExactGP):
 class BotorchCompatibleGP(
     Model, AbstractBaseModel, botorch.models.model.FantasizeMixin
 ):
-    def __init__(self, dim_input, device, batch_size: int = 64):
+    def __init__(
+        self, dim_input, device, num_components: int = 100, batch_size: int = 64
+    ):
         super().__init__()
 
         self.device = device
         self.data_dim = dim_input
         self.batch_size = batch_size
+        self.num_components = num_components
 
         self.likelihood = GaussianLikelihood().to(device)
 
         # Initialize the GP models
         self.noise_gp = SparseGPModel(None, None, self.likelihood, device)
-        self.neural_gp = NeuralGPModel(None, None, self.likelihood, dim_input, device)
+        self.neural_gp = NeuralGPModel(
+            None, None, self.likelihood, num_components, device
+        )
         self.sum_gp = SumGPModel(
             self.neural_gp, self.noise_gp, None, None, device
         )  # No separate training data

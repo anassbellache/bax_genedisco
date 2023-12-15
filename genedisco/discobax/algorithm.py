@@ -14,6 +14,7 @@ from argparse import Namespace
 from typing import List
 
 import numpy as np
+from sklearn.decomposition import PCA
 import torch
 from botorch.sampling import SobolQMCNormalSampler
 from joblib import Parallel, delayed
@@ -97,7 +98,7 @@ class TopK(FixedPathAlgorithm):
         return (
             np.argsort(self.exe_path.y)[: self.params.k]
             if self.params.opt_mode == "min"
-            else np.argsort(self.exe_path.y)[-self.params.k:]
+            else np.argsort(self.exe_path.y)[-self.params.k :]
         )
 
     def get_exe_path_crop(self):
@@ -130,42 +131,17 @@ class TopK(FixedPathAlgorithm):
     def output_dist_fn_jaccard(a, b):
         return 1 - jaccard_similarity(a.x, b.x)
 
-def perform_pca(X, n_components):
-    # Centering the data
-    X_mean = torch.mean(X, dim=0)
-    X_centered = X - X_mean
 
-    # SVD
-    U, S, V = torch.svd(X_centered)
-
-    # Select the principal components
-    components = V[:, :n_components]
-
-    # Project the data onto principal components
-    X_pca = torch.mm(X_centered, components)
-    return X_pca
-
-
-def compute_expected_max(candidates, S_tensor, f, mc_samples, device, n_components=None, mc_sampler=None):
-    # Handling a potentially 3-dimensional S_tensor
+def compute_expected_max(candidates, S_tensor, f, mc_samples, device, mc_sampler=None):
     if S_tensor.dim() == 3:
-        S_tensor = S_tensor.squeeze(0)
+        S_tensor = S_tensor.view(-1, S_tensor.size(-1))
     assert (
-            S_tensor.dim() == 2
+        S_tensor.dim() == 2
     ), f"Expected S_tensor of dim 2, got {S_tensor.dim()} with shape {S_tensor.shape}"
-
-    assert (
-            candidates.dim() == 3
-    ), f"Expected candidates of dim 3, got {candidates.dim()} with shape {candidates.shape}"
 
     # Expand S_tensor to match the batch size of candidates
     S_tensor = S_tensor.unsqueeze(0).expand(candidates.size(0), -1, -1)
     combined = torch.cat([S_tensor, candidates], dim=1).to(device)
-
-    # Perform PCA if n_components is specified
-    if n_components is not None:
-        # Perform PCA on combined tensor
-        combined = perform_pca(combined, n_components)
 
     if mc_sampler is None:
         mc_sampler = SobolQMCNormalSampler(sample_shape=torch.Size([mc_samples]))
@@ -174,22 +150,20 @@ def compute_expected_max(candidates, S_tensor, f, mc_samples, device, n_componen
         posterior = f.posterior(combined)
         samples = mc_sampler(posterior).squeeze(-1)
 
-    # Calculate the max value
-    max_values = samples.max(dim=1).values  # Max over each MC sample
-    expected_max = max_values.mean(dim=1)  # Mean over all candidates
+    max_values = samples.max(dim=1).values
+    expected_max = max_values.mean(dim=1)
     return expected_max
 
 
 class SubsetSelect(Algorithm):
-    def __init__(self, X: AbstractDataSource, num_paths, device, n_samples=500, k=3):
+    def __init__(self, X: torch.Tensor, num_paths, device, n_samples=500, k=3):
         super().__init__(params={})
         self.k = k
-        self.X = torch.tensor(np.array(X.get_data()), dtype=torch.float32).to(device)
+        self.X = X
         self.device = device
         self.selected_subset = []
         self.mc_samples = n_samples
         self.num_paths = num_paths
-        self.input_dim = self.X.shape[-1]
         self.exe_path = Namespace(x=[], y=[])
 
     def initialize(self):
@@ -197,19 +171,20 @@ class SubsetSelect(Algorithm):
         self.selected_subset = []
 
     def monte_carlo_expectation(
-            self, candidates: torch.Tensor, S: List[torch.Tensor], f: BotorchCompatibleGP
+        self, candidates: torch.Tensor, S: List[torch.Tensor], f: BotorchCompatibleGP
     ):
         candidates = candidates.to(self.device)
         S_tensor = torch.stack(S).to(self.device)
 
         # Compute expected maxima for all candidates in parallel
         expected_maxima = compute_expected_max(
-            candidates, S_tensor, f, self.mc_samples, self.device, n_components=100
+            candidates, S_tensor, f, self.mc_samples, self.device
         )
 
         return expected_maxima
 
     def handle_first_selection(self, f: BotorchCompatibleGP):
+        print("Handle first selection")
         with torch.no_grad():
             posterior = f.posterior(self.X)
             mean = posterior.mean.squeeze()
@@ -231,34 +206,24 @@ class SubsetSelect(Algorithm):
         if len(self.selected_subset) == 0:
             return self.handle_first_selection(f)
 
-        # Convert the list of tensors to a single tensor
+        print("Handling next steps")
+
         if self.selected_subset:
-            subset_tensor = torch.stack(self.selected_subset)
-
-            # Ensure tensors are 2D
-            X_flat = self.X.view(self.X.size(0), -1)
-            subset_flat = subset_tensor.view(subset_tensor.size(0), -1)
-
-            # Calculate distances between each pair of points in X and selected_subset
-            distances = torch.cdist(X_flat, subset_flat)
-
-            # Create a mask where True indicates a row in X with no close match in selected_subset
-            threshold = 0.01  # Define your closeness threshold
+            subset_tensor = torch.stack(self.selected_subset).view(-1, self.X.size(-1))
+            distances = torch.cdist(self.X.view(-1, self.X.size(-1)), subset_tensor)
+            print("distances tensor: ", distances.shape)
+            threshold = 0.01
             mask = torch.all(distances > threshold, dim=1)
         else:
-            mask = torch.ones(self.X.size(0), dtype=torch.bool)
+            mask = torch.ones(self.X.size(1), dtype=torch.bool, device=self.device)
 
-        candidates = self.X[mask]
+        # Apply mask to self.X
+        # Note: self.X[0] is used to index along the sample dimension
+        candidates = self.X[0][mask]
 
         # Reshape candidates to be 3D if necessary
         if candidates.dim() == 2:
-            candidates = candidates.unsqueeze(0)  # Add a batch dimension
-
-        # Reshape candidates if necessary
-        if candidates.dim() == 4:
-            # Assuming the tensor should be collapsed into 3 dimensions
-            # Adjust the following line according to the correct reshaping needed
-            candidates = candidates.squeeze(1)
+            candidates = candidates.unsqueeze(0)
 
         if candidates.dim() != 3:
             raise ValueError(f"Unexpected shape of candidates: {candidates.shape}")

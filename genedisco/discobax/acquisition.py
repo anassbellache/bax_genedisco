@@ -1,5 +1,6 @@
 from typing import List, AnyStr
 
+from sklearn.decomposition import PCA
 import numpy as np
 import torch
 from botorch.sampling import SobolQMCNormalSampler
@@ -18,6 +19,13 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
         self.device = device
         self.path_sample_num = path_sample_num
         self.n_components = n_components
+        self.pca = PCA(n_components=self.n_components) if self.n_components else None
+
+    def _apply_pca(self, X):
+        if self.pca is not None:
+            X = self.pca.fit_transform(X.cpu().numpy())
+            X = torch.tensor(X, dtype=torch.float32, device=self.device)
+        return X
 
     def __call__(
         self,
@@ -33,6 +41,8 @@ class DiscoBAXAdditive(BaseBatchAcquisitionFunction):
             dtype=torch.float32,
             device=self.device,
         ).squeeze(0)
+
+        self.X = self._apply_pca(X)
 
         self.model = last_model
 
